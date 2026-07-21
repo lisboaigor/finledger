@@ -30,6 +30,7 @@ onMounted(vm.carregar)
                 { key: 'serie_numero', label: 'Série / Número' },
                 { key: 'chave', label: 'Chave' },
                 { key: 'total', label: 'Total' },
+                { key: 'impostos', label: 'Impostos' },
                 { key: 'status', label: 'Status' },
                 { key: 'acoes', label: 'Ações', class: 'w-36' },
             ]"
@@ -39,6 +40,18 @@ onMounted(vm.carregar)
                 <span class="text-xs font-mono">{{ row.chave || '—' }}</span>
             </template>
             <template #cell-total="{ row }">{{ formatCentavos(row.total_centavos) }}</template>
+            <template #cell-impostos="{ row }">
+                <div v-if="vm.impostosDaNota(row).length" class="flex flex-wrap gap-x-2 gap-y-0.5">
+                    <span
+                        v-for="t in vm.impostosDaNota(row)"
+                        :key="t.sigla"
+                        class="whitespace-nowrap text-xs text-muted-foreground"
+                    >
+                        <span class="font-medium">{{ t.sigla }}</span> {{ formatCentavos(t.centavos) }}
+                    </span>
+                </div>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+            </template>
             <template #cell-status="{ row }">
                 <div class="flex flex-wrap gap-1">
                     <StatusBadge :value="row.status" :severity="vm.statusSeverity(row.status)" />

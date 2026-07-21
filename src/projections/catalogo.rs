@@ -28,6 +28,7 @@ impl CatalogoProjection {
                 categoria,
                 marca,
                 controla_estoque,
+                c_class_trib,
                 occurred_at,
             } => {
                 let Some(id) = crate::projections::parse_uuid("produto_id", produto_id) else {
@@ -35,8 +36,8 @@ impl CatalogoProjection {
                 };
                 sqlx::query(
                     "INSERT INTO proj_produtos
-                        (produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque, criado_em, atualizado_em, tenant_id)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11, $11, $12)
+                        (produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque, c_class_trib, criado_em, atualizado_em, tenant_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11, $12, $12, $13)
                      ON CONFLICT (tenant_id, produto_id) DO NOTHING",
                 )
                 .bind(id)
@@ -49,6 +50,7 @@ impl CatalogoProjection {
                 .bind(categoria.as_str())
                 .bind(marca.as_deref())
                 .bind(*controla_estoque)
+                .bind(c_class_trib.as_deref())
                 .bind(*occurred_at)
                 .bind(tenant_id)
                 .execute(&self.pool)
@@ -91,6 +93,7 @@ impl CatalogoProjection {
                 categoria,
                 marca,
                 controla_estoque,
+                c_class_trib,
                 occurred_at,
             } => {
                 let Some(id) = crate::projections::parse_uuid("produto_id", produto_id) else {
@@ -99,8 +102,8 @@ impl CatalogoProjection {
                 sqlx::query(
                     "UPDATE proj_produtos
                      SET sku = $2, descricao = $3, ncm = $4, unidade = $5, categoria = $6, marca = $7,
-                         controla_estoque = $8, atualizado_em = $9
-                     WHERE produto_id = $1 AND tenant_id = $10",
+                         controla_estoque = $8, c_class_trib = $9, atualizado_em = $10
+                     WHERE produto_id = $1 AND tenant_id = $11",
                 )
                 .bind(id)
                 .bind(sku.as_str())
@@ -110,6 +113,7 @@ impl CatalogoProjection {
                 .bind(categoria.as_str())
                 .bind(marca.as_deref())
                 .bind(*controla_estoque)
+                .bind(c_class_trib.as_deref())
                 .bind(*occurred_at)
                 .bind(tenant_id)
                 .execute(&self.pool)

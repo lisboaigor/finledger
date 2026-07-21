@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::fiscal::domain::tributacao::{
+    CodigoMunicipio, Crt, PerfilFiscal, RegimeTributario, Uf,
+};
 use crate::shared::tenant::current_tenant_id;
 
 #[derive(Serialize, sqlx::FromRow, Clone)]
@@ -300,6 +303,51 @@ impl TenantRepository {
         }
     }
 
+    /// Perfil fiscal do tenant atual (regime tributário, UF/município, CRT).
+    /// `regime_tributario` NULL = perfil não configurado → o motor tributário
+    /// usa o fallback legado (Simples Nacional/SP).
+    pub async fn obter_perfil_fiscal(&self) -> Result<PerfilFiscalDto, AppError> {
+        let tenant_id = current_tenant_id()?;
+        let row = sqlx::query_as(
+            "SELECT regime_tributario, uf, codigo_municipio, crt, ibs_cbs_regime_regular
+             FROM tenants WHERE tenant_id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::infra)?;
+        Ok(row.unwrap_or_default())
+    }
+
+    pub async fn atualizar_perfil_fiscal(&self, dto: PerfilFiscalDto) -> Result<(), AppError> {
+        // Valida via o value object do domínio antes de persistir: UF/município/
+        // CRT malformados nunca chegam ao banco (o CHECK é só a última linha).
+        dto.para_dominio()?;
+        let tenant_id = current_tenant_id()?;
+        let n = sqlx::query(
+            "UPDATE tenants
+             SET regime_tributario = $1, uf = $2, codigo_municipio = $3, crt = $4,
+                 ibs_cbs_regime_regular = $5
+             WHERE tenant_id = $6",
+        )
+        .bind(dto.regime_tributario)
+        .bind(dto.uf)
+        .bind(dto.codigo_municipio)
+        .bind(dto.crt)
+        .bind(dto.ibs_cbs_regime_regular)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::infra)?
+        .rows_affected();
+
+        if n == 0 {
+            Err(AppError::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Marca whitelabel do tenant atual (self-service).
     pub async fn obter_marca(&self) -> Result<Marca, AppError> {
         let tenant_id = current_tenant_id()?;
@@ -522,6 +570,52 @@ pub struct ConfigPrecificacao {
     /// não entra na fórmula de preço.
     #[serde(default)]
     pub meta_faturamento_mensal_centavos: Option<i64>,
+}
+
+/// Perfil fiscal na borda do repositório: colunas cruas de `tenants`.
+/// A validação de invariantes fica no domínio (`para_dominio`) — o DTO existe
+/// para o round-trip com o frontend, onde tudo é opcional até configurar.
+#[derive(Debug, Default, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct PerfilFiscalDto {
+    #[serde(default)]
+    pub regime_tributario: Option<String>,
+    #[serde(default)]
+    pub uf: Option<String>,
+    #[serde(default)]
+    pub codigo_municipio: Option<String>,
+    #[serde(default)]
+    pub crt: Option<i16>,
+    #[serde(default)]
+    pub ibs_cbs_regime_regular: bool,
+}
+
+impl PerfilFiscalDto {
+    /// `Ok(None)` = perfil não configurado (regime ausente) → chamador usa
+    /// `PerfilFiscal::padrao_legado()`. Configurado pela metade é erro de
+    /// validação, não fallback silencioso.
+    pub fn para_dominio(&self) -> Result<Option<PerfilFiscal>, AppError> {
+        let Some(regime) = self.regime_tributario.as_deref() else {
+            return Ok(None);
+        };
+        let regime = RegimeTributario::try_from(regime).map_err(AppError::Domain)?;
+        let (Some(uf), Some(municipio), Some(crt)) =
+            (self.uf.clone(), self.codigo_municipio.clone(), self.crt)
+        else {
+            return Err(AppError::Domain(pharos_core::DomainError::Validation(
+                "Perfil fiscal incompleto: UF, município e CRT são obrigatórios".into(),
+            )));
+        };
+        Ok(Some(PerfilFiscal {
+            regime,
+            uf: Uf::try_from(uf).map_err(AppError::Domain)?,
+            codigo_municipio: CodigoMunicipio::try_from(municipio).map_err(AppError::Domain)?,
+            crt: Crt::try_from(u8::try_from(crt).map_err(|_| {
+                AppError::Domain(pharos_core::DomainError::Validation("CRT inválido".into()))
+            })?)
+            .map_err(AppError::Domain)?,
+            ibs_cbs_regime_regular: self.ibs_cbs_regime_regular,
+        }))
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, sqlx::FromRow, Clone)]

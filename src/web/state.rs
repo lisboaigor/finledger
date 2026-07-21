@@ -86,6 +86,7 @@ sub_state!(FiscalState {
     fiscal: Arc<
         crate::fiscal::application::handler::FiscalHandlers<
             crate::fiscal::infrastructure::sefaz::StubSefazClient,
+            crate::fiscal::infrastructure::aliquotas::PostgresAliquotaProvider,
         >,
     >,
 });

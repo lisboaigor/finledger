@@ -25,6 +25,8 @@ pub struct AtualizarProduto {
     pub marca: Option<String>,
     #[serde(default = "default_true")]
     pub controla_estoque: bool,
+    #[serde(default)]
+    pub classe_trib: Option<String>,
 }
 
 impl CommandHandler<AtualizarProduto> for CatalogoHandlers {
@@ -41,6 +43,7 @@ impl CommandHandler<AtualizarProduto> for CatalogoHandlers {
             cmd.categoria,
             cmd.marca,
             cmd.controla_estoque,
+            cmd.classe_trib,
         )?;
         self.salvar(&mut produto).await
     }

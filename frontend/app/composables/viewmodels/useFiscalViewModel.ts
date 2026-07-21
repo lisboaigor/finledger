@@ -11,6 +11,21 @@ export function useFiscalViewModel() {
     const loading = ref(false)
     const filters = ref({ global: { value: null as string | null, matchMode: 'contains' } })
 
+    /** Tributos com valor > 0 na nota, prontos para exibição compacta.
+     * Notas anteriores ao motor tributário retornam lista vazia (valores 0). */
+    function impostosDaNota(nf: NotaFiscal): { sigla: string, centavos: number }[] {
+        return [
+            { sigla: 'ICMS', centavos: nf.icms_centavos },
+            { sigla: 'PIS', centavos: nf.pis_centavos },
+            { sigla: 'COFINS', centavos: nf.cofins_centavos },
+            { sigla: 'ISS', centavos: nf.iss_centavos },
+            { sigla: 'CBS', centavos: nf.cbs_centavos },
+            { sigla: 'IBS UF', centavos: nf.ibs_uf_centavos },
+            { sigla: 'IBS Mun', centavos: nf.ibs_mun_centavos },
+            { sigla: 'IS', centavos: nf.is_centavos },
+        ].filter(t => t.centavos > 0)
+    }
+
     function statusSeverity(status: string) {
         return (
             {
@@ -71,6 +86,7 @@ export function useFiscalViewModel() {
         notas,
         loading,
         filters,
+        impostosDaNota,
         statusSeverity,
         carregar,
         retransmitir,

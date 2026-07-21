@@ -20,7 +20,9 @@ use finledger::estoque::infrastructure::repository::PostgresEstoqueRepository;
 use finledger::financeiro::infrastructure::repository::{
     PostgresContaPagarRepository, PostgresContaReceberRepository,
 };
+use finledger::fiscal::infrastructure::aliquotas::PostgresAliquotaProvider;
 use finledger::fiscal::infrastructure::repository::PostgresNotaFiscalRepository;
+use finledger::tenants::repository::TenantRepository;
 use finledger::vendas::application::commands::{
     AdicionarItemVenda, ConfirmarVenda, DefinirFormaPagamento, IniciarVenda,
 };
@@ -75,6 +77,8 @@ async fn montar_handlers(
     let fiscal = Arc::new(FiscalHandlers::new(
         Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
         Arc::new(StubSefazClient),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
         bus.clone(),
     ));
 

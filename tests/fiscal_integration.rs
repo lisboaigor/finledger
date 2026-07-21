@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod helpers;
-use helpers::{TestResult, in_tenant, new_tenant_id, setup_db, start_postgres};
+use helpers::{TestResult, create_tenant, in_tenant, new_tenant_id, setup_db, start_postgres};
 
 use std::sync::Arc;
 
@@ -11,8 +11,13 @@ use pharos_core::Entity;
 use finledger::fiscal::{
     application::{commands::CancelarNotaFiscal, handler::FiscalHandlers},
     domain::value_objects::StatusNFe,
-    infrastructure::{repository::PostgresNotaFiscalRepository, sefaz::StubSefazClient},
+    infrastructure::{
+        aliquotas::PostgresAliquotaProvider,
+        repository::PostgresNotaFiscalRepository,
+        sefaz::{SefazClient, SefazError, SefazResponse, StubSefazClient},
+    },
 };
+use finledger::tenants::repository::TenantRepository;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -23,7 +28,13 @@ async fn fiscal_gerar_e_transmitir_autoriza_nf() -> TestResult {
     let repo = Arc::new(PostgresNotaFiscalRepository::new(pool.clone()));
     let bus = EventBus::new();
     let sefaz = Arc::new(StubSefazClient);
-    let fiscal = FiscalHandlers::new(repo, sefaz, bus);
+    let fiscal = FiscalHandlers::new(
+        repo,
+        sefaz,
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
 
     let tenant_id = new_tenant_id();
     let venda_id = Uuid::new_v4();
@@ -58,7 +69,13 @@ async fn fiscal_cancelar_nf_autorizada() -> TestResult {
     use finledger::projections::fiscal::FiscalProjection;
     bus.register(FiscalProjection::new(pool.clone()));
     let sefaz = Arc::new(StubSefazClient);
-    let fiscal = FiscalHandlers::new(Arc::clone(&repo), sefaz, bus);
+    let fiscal = FiscalHandlers::new(
+        Arc::clone(&repo),
+        sefaz,
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
 
     let tenant_id = new_tenant_id();
     let venda_id = Uuid::new_v4();
@@ -122,7 +139,13 @@ async fn fiscal_projecao_registra_nf_autorizada() -> TestResult {
     use finledger::projections::fiscal::FiscalProjection;
     bus.register(FiscalProjection::new(pool.clone()));
     let sefaz = Arc::new(StubSefazClient);
-    let fiscal = FiscalHandlers::new(repo, sefaz, bus);
+    let fiscal = FiscalHandlers::new(
+        repo,
+        sefaz,
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
 
     let tenant_id = new_tenant_id();
     let venda_id = Uuid::new_v4();
@@ -157,5 +180,348 @@ async fn fiscal_projecao_registra_nf_autorizada() -> TestResult {
         Some("autorizada"),
         "projeção deve refletir status autorizada"
     );
+    Ok(())
+}
+
+fn montar_fiscal(
+    pool: &pharos_postgres::Pool,
+    bus: EventBus,
+) -> FiscalHandlers<StubSefazClient, PostgresAliquotaProvider> {
+    FiscalHandlers::new(
+        Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
+        Arc::new(StubSefazClient),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    )
+}
+
+/// Oráculo independente dos valores esperados: espelha a LEI (fases da
+/// transição + seed de alíquotas da migração 009), não o motor. O handler
+/// emite com a data corrente (`Utc::now`), então os testes calculam o esperado
+/// para o ano de hoje — nada quebra na virada de fase (2027, 2029, 2033...).
+struct ImpostosEsperados {
+    icms: i64,
+    pis: i64,
+    cofins: i64,
+    cbs: i64,
+    ibs_uf: i64,
+    ibs_mun: i64,
+}
+
+fn impostos_esperados_hoje(base: i64, reducao_bps: i64) -> ImpostosEsperados {
+    use chrono::Datelike;
+    let ano = chrono::Utc::now().year();
+
+    let aplicar = |bps: i64| (base * bps + 5_000) / 10_000;
+    // Redução de classe (LC 214) só sobre CBS/IBS.
+    let aplicar_reduzido = |bps: i64| aplicar(bps * (10_000 - reducao_bps) / 10_000);
+    // Phase-down constitucional do ICMS: 100% até 2028, 90..60% em 2029-2032, 0 em 2033+.
+    let fator_icms = match ano {
+        ..=2028 => 10_000,
+        2029 => 9_000,
+        2030 => 8_000,
+        2031 => 7_000,
+        2032 => 6_000,
+        _ => 0,
+    };
+    let (cbs_bps, ibs_uf_bps, ibs_mun_bps) = match ano {
+        ..=2025 => (0, 0, 0),
+        2026 => (90, 5, 5),
+        2027..=2028 => (880, 5, 5),
+        2029 => (880, 142, 35),
+        2030 => (880, 283, 71),
+        2031 => (880, 425, 106),
+        2032 => (880, 566, 142),
+        _ => (880, 1416, 354),
+    };
+    let pis_cofins_vigente = ano <= 2026;
+
+    ImpostosEsperados {
+        icms: aplicar(1800 * fator_icms / 10_000),
+        pis: if pis_cofins_vigente { aplicar(65) } else { 0 },
+        cofins: if pis_cofins_vigente { aplicar(300) } else { 0 },
+        cbs: aplicar_reduzido(cbs_bps),
+        ibs_uf: aplicar_reduzido(ibs_uf_bps),
+        ibs_mun: aplicar_reduzido(ibs_mun_bps),
+    }
+}
+
+/// SEFAZ que rejeita toda transmissão — exercita o desfecho infeliz que o
+/// `StubSefazClient` (sempre autoriza) nunca alcança.
+struct SefazQueRejeita;
+impl SefazClient for SefazQueRejeita {
+    async fn transmitir(&self, _xml: String) -> Result<SefazResponse, SefazError> {
+        Err(SefazError::Rejeicao {
+            codigo: "539".into(),
+            motivo: "Duplicidade de NF-e".into(),
+        })
+    }
+}
+
+/// SEFAZ fora do ar — a NF deve ficar em `Transmitida` aguardando retransmissão.
+struct SefazIndisponivel;
+impl SefazClient for SefazIndisponivel {
+    async fn transmitir(&self, _xml: String) -> Result<SefazResponse, SefazError> {
+        Err(SefazError::Indisponivel("timeout".into()))
+    }
+}
+
+fn item_teste(produto_id: Uuid, preco: i64) -> finledger::vendas::domain::events::ItemVendaSnapshot {
+    finledger::vendas::domain::events::ItemVendaSnapshot {
+        item_id: produto_id.to_string(),
+        produto_id: produto_id.to_string(),
+        sku: "SKU-T".into(),
+        descricao: "Produto teste".into(),
+        quantidade: 1,
+        preco_unitario_centavos: preco,
+    }
+}
+
+#[tokio::test]
+async fn rejeicao_da_sefaz_deixa_nf_rejeitada() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = FiscalHandlers::new(
+        Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
+        Arc::new(SefazQueRejeita),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
+
+    let venda_id = Uuid::new_v4();
+    let item = item_teste(Uuid::new_v4(), 5000);
+    in_tenant(new_tenant_id(), async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item])
+            .await
+            .expect("rejeição da SEFAZ não é erro do fluxo — vira status da NF");
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status, rejeicao_codigo FROM proj_notas_fiscais WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_optional(&pool)
+    .await?;
+    let (status, codigo) = row.expect("NF projetada");
+    assert_eq!(status, "rejeitada");
+    assert_eq!(codigo.as_deref(), Some("539"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn sefaz_indisponivel_deixa_nf_transmitida_para_retransmissao() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = FiscalHandlers::new(
+        Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
+        Arc::new(SefazIndisponivel),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
+
+    let venda_id = Uuid::new_v4();
+    let item = item_teste(Uuid::new_v4(), 5000);
+    in_tenant(new_tenant_id(), async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item])
+            .await
+            .expect("indisponibilidade não derruba o fluxo");
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM proj_notas_fiscais WHERE venda_id = $1")
+            .bind(venda_id)
+            .fetch_optional(&pool)
+            .await?;
+    assert_eq!(
+        status.as_deref(),
+        Some("transmitida"),
+        "NF fica transmitida aguardando retransmissão manual"
+    );
+    Ok(())
+}
+
+/// Classe tributária corrompida na projeção (só alcançável por SQL manual —
+/// os comandos validam na entrada): a emissão falha com erro de domínio em vez
+/// de calcular imposto com classificação inválida.
+#[tokio::test]
+async fn classe_tributaria_corrompida_na_projecao_falha_emissao() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let tenant_id = new_tenant_id();
+    let produto_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO proj_produtos
+            (produto_id, tenant_id, sku, descricao, ncm, unidade, preco_custo, preco_venda,
+             categoria, ativo, c_class_trib, criado_em, atualizado_em)
+         VALUES ($1, $2, 'SKU-BAD', 'Produto corrompido', '84716053', 'UN', 1000, 5000,
+                 'Teste', TRUE, '12A', NOW(), NOW())",
+    )
+    .bind(produto_id)
+    .bind(tenant_id)
+    .execute(&pool)
+    .await?;
+
+    let fiscal = montar_fiscal(&pool, EventBus::new());
+    let venda_id = Uuid::new_v4();
+    let item = item_teste(produto_id, 5000);
+    let resultado = in_tenant(tenant_id, async move {
+        fiscal.gerar_e_transmitir(venda_id, None, &[item]).await
+    })
+    .await;
+    assert!(resultado.is_err(), "classe malformada deve falhar a emissão");
+    Ok(())
+}
+
+/// Trava de regressão: tenant SEM perfil fiscal configurado emite NF com os
+/// mesmos valores legados de sempre (ICMS 18%, PIS 0,65%, COFINS 3%, aritmética
+/// inteira). Estando em 2026, a fase de teste da reforma acrescenta CBS/IBS
+/// informativos — obrigação legal do documento, sem alterar os legados.
+#[tokio::test]
+async fn nf_sem_perfil_fiscal_mantem_valores_legados() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = montar_fiscal(&pool, bus);
+
+    let tenant_id = new_tenant_id(); // não existe em `tenants` → perfil ausente
+    let venda_id = Uuid::new_v4();
+    let produto_id = Uuid::new_v4();
+    let item = finledger::vendas::domain::events::ItemVendaSnapshot {
+        item_id: produto_id.to_string(),
+        produto_id: produto_id.to_string(),
+        sku: "SKU-REG".into(),
+        descricao: "Produto regressão".into(),
+        quantidade: 1,
+        preco_unitario_centavos: 100_000, // R$ 1.000,00
+    };
+
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item])
+            .await
+            .expect("gerar e transmitir falhou");
+    })
+    .await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let row: Option<(i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT icms_centavos, pis_centavos, cofins_centavos,
+                cbs_centavos, ibs_uf_centavos, ibs_mun_centavos
+         FROM proj_notas_fiscais WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_optional(&pool)
+    .await?;
+    let (icms, pis, cofins, cbs, ibs_uf, ibs_mun) = row.expect("NF projetada");
+
+    // Compara com o oráculo da fase vigente hoje (tributação integral).
+    let e = impostos_esperados_hoje(100_000, 0);
+    assert_eq!(icms, e.icms, "ICMS da fase vigente");
+    assert_eq!(pis, e.pis, "PIS da fase vigente");
+    assert_eq!(cofins, e.cofins, "COFINS da fase vigente");
+    assert_eq!(cbs, e.cbs, "CBS da fase vigente");
+    assert_eq!(ibs_uf, e.ibs_uf);
+    assert_eq!(ibs_mun, e.ibs_mun);
+    // Sanidade: os montantes não podem ser todos zero — pegaria um motor que
+    // ignora as alíquotas por completo.
+    assert!(icms + pis + cofins + cbs > 0, "algum imposto deve incidir");
+    Ok(())
+}
+
+/// Tenant COM perfil fiscal e produto classificado com redução de 60%:
+/// CBS/IBS saem reduzidos; legados intactos (a classe da reforma não afeta ICMS).
+#[tokio::test]
+async fn nf_com_perfil_e_classe_de_reducao_aplica_reducao_no_ibs_cbs() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let tenant_id = create_tenant(&pool, "fiscal-perfil").await?;
+    sqlx::query(
+        "UPDATE tenants SET regime_tributario = 'lucro_presumido', uf = 'SP',
+                codigo_municipio = '3550308', crt = 3 WHERE tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .execute(&pool)
+    .await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = montar_fiscal(&pool, bus);
+
+    let venda_id = Uuid::new_v4();
+    let produto_id = Uuid::new_v4();
+    // Produto classificado com a classe de redução 60% (seed da migração 009).
+    sqlx::query(
+        "INSERT INTO proj_produtos
+            (produto_id, tenant_id, sku, descricao, ncm, unidade, preco_custo, preco_venda,
+             categoria, ativo, c_class_trib, criado_em, atualizado_em)
+         VALUES ($1, $2, 'SKU-RED', 'Produto com redução', '84716053', 'UN', 1000, 100000,
+                 'Teste', TRUE, '200003', NOW(), NOW())",
+    )
+    .bind(produto_id)
+    .bind(tenant_id)
+    .execute(&pool)
+    .await?;
+
+    let item = finledger::vendas::domain::events::ItemVendaSnapshot {
+        item_id: produto_id.to_string(),
+        produto_id: produto_id.to_string(),
+        sku: "SKU-RED".into(),
+        descricao: "Produto com redução".into(),
+        quantidade: 1,
+        preco_unitario_centavos: 100_000,
+    };
+
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item])
+            .await
+            .expect("gerar e transmitir falhou");
+    })
+    .await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT icms_centavos, cbs_centavos, ibs_uf_centavos, ibs_mun_centavos
+         FROM proj_notas_fiscais WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_optional(&pool)
+    .await?;
+    let (icms, cbs, ibs_uf, ibs_mun) = row.expect("NF projetada");
+
+    let integral = impostos_esperados_hoje(100_000, 0);
+    let reduzido = impostos_esperados_hoje(100_000, 6_000);
+    assert_eq!(icms, integral.icms, "classe da reforma não afeta o ICMS");
+    assert_eq!(cbs, reduzido.cbs, "CBS com redução de 60%");
+    assert_eq!(ibs_uf, reduzido.ibs_uf, "IBS UF com redução de 60%");
+    assert_eq!(ibs_mun, reduzido.ibs_mun, "IBS municipal com redução de 60%");
+    // A redução precisa ter efeito real (reduzido < integral) — senão o teste
+    // passaria mesmo com a classe ignorada.
+    assert!(cbs < integral.cbs, "redução deve diminuir a CBS");
     Ok(())
 }

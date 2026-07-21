@@ -1,4 +1,6 @@
 import type { Produto } from '~/models/catalogo'
+import type { ClasseTributaria } from '~/models/fiscal'
+import { listarClassesTributarias } from '~/models/fiscal'
 import {
     alternarAtivoProduto,
     atualizarPrecos,
@@ -46,7 +48,10 @@ export function useCatalogoViewModel() {
     async function carregar() {
         loading.value = true
         try {
-            const { produtos: lista } = await listarProdutos(apiFetch)
+            const [{ produtos: lista }] = await Promise.all([
+                listarProdutos(apiFetch),
+                classesTributarias.value.length ? Promise.resolve() : carregarClassesTributarias(),
+            ])
             produtos.value = lista
         } catch (e) {
             notifyError(apiErrorMessage(e))
@@ -69,7 +74,20 @@ export function useCatalogoViewModel() {
         preco_custo: 0,
         preco_venda: 0,
         controla_estoque: true,
+        classe_trib: '' as string,
     })
+
+    // Classes tributárias de referência (cClassTrib) para o select do form —
+    // carregadas uma vez; falha silenciosa deixa o campo vazio (opcional).
+    const classesTributarias = ref<ClasseTributaria[]>([])
+    async function carregarClassesTributarias() {
+        try {
+            const { classes } = await listarClassesTributarias(apiFetch)
+            classesTributarias.value = classes
+        } catch {
+            classesTributarias.value = []
+        }
+    }
 
     function abrirNovo() {
         editando.value = null
@@ -83,6 +101,7 @@ export function useCatalogoViewModel() {
             preco_custo: 0,
             preco_venda: 0,
             controla_estoque: true,
+            classe_trib: '',
         })
         dialogVisible.value = true
     }
@@ -109,6 +128,7 @@ export function useCatalogoViewModel() {
             preco_custo: p.preco_custo / 100,
             preco_venda: p.preco_venda / 100,
             controla_estoque: p.controla_estoque,
+            classe_trib: p.c_class_trib ?? '',
         })
         Object.assign(ajustesProduto, { margemPct: null, custoFixoUnitario: null, freteVendaPct: null })
         ajustesOriginais.value = JSON.stringify(ajustesProduto)
@@ -151,6 +171,7 @@ export function useCatalogoViewModel() {
                     categoria: form.categoria,
                     marca: form.marca.trim() || null,
                     controla_estoque: form.controla_estoque,
+                    classe_trib: form.classe_trib || null,
                 })
                 await atualizarPrecos(apiFetch, editando.value.produto_id, {
                     preco_custo_centavos: toCentavos(form.preco_custo),
@@ -166,6 +187,7 @@ export function useCatalogoViewModel() {
                     categoria: form.categoria,
                     marca: form.marca.trim() || null,
                     controla_estoque: form.controla_estoque,
+                    classe_trib: form.classe_trib || null,
                     preco_custo_centavos: toCentavos(form.preco_custo),
                     preco_venda_centavos: toCentavos(form.preco_venda),
                 })
@@ -200,6 +222,7 @@ export function useCatalogoViewModel() {
         editando,
         salvando,
         form,
+        classesTributarias,
         ajustesProduto,
         abrirNovo,
         abrirEdicao,

@@ -4,6 +4,7 @@ use pharos_macros::{AggregateRoot, Entity, id_type};
 use serde::{Deserialize, Serialize};
 
 use super::events::CatalogoEvent;
+use crate::fiscal::domain::tributacao::ClasseTributaria;
 use crate::shared::{Dinheiro, Ncm, NomeNaoVazio, Sku, Unidade};
 
 id_type!(ProdutoId);
@@ -31,6 +32,11 @@ pub struct Produto {
     /// ficam de fora da checagem de disponibilidade em vendas/orçamentos.
     #[serde(default = "default_true")]
     controla_estoque: bool,
+    /// Classe tributária (cClassTrib) da reforma; `None` = tributação
+    /// integral (classe padrão) — produtos existentes não precisam de
+    /// reclassificação.
+    #[serde(default)]
+    classe_trib: Option<ClasseTributaria>,
 }
 
 fn default_true() -> bool {
@@ -83,6 +89,10 @@ impl Produto {
         self.controla_estoque
     }
 
+    pub fn classe_trib(&self) -> Option<&ClasseTributaria> {
+        self.classe_trib.as_ref()
+    }
+
     #[allow(clippy::too_many_arguments)] // flat args mirror the command payload
     pub fn cadastrar(
         sku: String,
@@ -94,11 +104,13 @@ impl Produto {
         categoria: String,
         marca: Option<String>,
         controla_estoque: bool,
+        classe_trib: Option<String>,
     ) -> DomainResult<Self> {
         let sku = Sku::try_from(sku)?;
         let descricao = NomeNaoVazio::try_from(descricao)?;
         let ncm = Ncm::try_from(ncm)?;
         let unidade = Unidade::try_from(unidade)?;
+        let classe_trib = classe_trib.map(ClasseTributaria::try_from).transpose()?;
 
         if preco_venda.centavos() <= 0 {
             return Err(DomainError::Validation(
@@ -127,6 +139,7 @@ impl Produto {
             categoria: categoria.clone(),
             marca: marca.clone(),
             controla_estoque,
+            c_class_trib: classe_trib.as_ref().map(|c| c.as_str().to_string()),
             occurred_at: Utc::now(),
         });
 
@@ -144,6 +157,7 @@ impl Produto {
             marca,
             ativo: true,
             controla_estoque,
+            classe_trib,
         })
     }
 
@@ -193,6 +207,7 @@ impl Produto {
         categoria: String,
         marca: Option<String>,
         controla_estoque: bool,
+        classe_trib: Option<String>,
     ) -> DomainResult<()> {
         if !self.ativo {
             return Err(DomainError::BusinessRule(
@@ -207,6 +222,7 @@ impl Produto {
         self.categoria = categoria.clone();
         self.marca = marca.clone();
         self.controla_estoque = controla_estoque;
+        self.classe_trib = classe_trib.map(ClasseTributaria::try_from).transpose()?;
 
         self.events.raise(CatalogoEvent::ProdutoAtualizado {
             produto_id: self.id.to_string(),
@@ -217,6 +233,7 @@ impl Produto {
             categoria,
             marca,
             controla_estoque,
+            c_class_trib: self.classe_trib.as_ref().map(|c| c.as_str().to_string()),
             occurred_at: Utc::now(),
         });
 
@@ -271,6 +288,7 @@ mod tests {
             "Freios".into(),
             Some("Fras-le".into()),
             true,
+            None,
         )
         .expect("produto válido")
     }
@@ -298,6 +316,7 @@ mod tests {
             "Freios".into(),
             None,
             true,
+            None,
         );
         assert!(matches!(r, Err(DomainError::Validation(_))));
     }
@@ -314,6 +333,7 @@ mod tests {
             "Freios".into(),
             None,
             true,
+            None,
         );
         assert!(matches!(r, Err(DomainError::Validation(_))));
     }
@@ -330,8 +350,57 @@ mod tests {
             "Freios".into(),
             None,
             true,
+            None,
         );
         assert!(matches!(r, Err(DomainError::Validation(_))));
+    }
+
+    #[test]
+    fn cadastrar_classe_tributaria_invalida_retorna_erro() {
+        let r = Produto::cadastrar(
+            "SKU-001".into(),
+            "Produto".into(),
+            "87083090".into(),
+            "UN".into(),
+            Dinheiro::from_centavos(5000),
+            Dinheiro::from_centavos(9000),
+            "Geral".into(),
+            None,
+            true,
+            Some("12A".into()), // cClassTrib exige 6 dígitos
+        );
+        assert!(matches!(r, Err(DomainError::Validation(_))));
+    }
+
+    #[test]
+    fn atualizar_classe_tributaria_valida_e_removivel() {
+        let mut p = produto_valido();
+        p.atualizar(
+            "SKU-1".into(),
+            "Produto".into(),
+            "87083090".into(),
+            "UN".into(),
+            "Geral".into(),
+            None,
+            true,
+            Some("200003".into()),
+        )
+        .expect("classe válida");
+        assert_eq!(p.classe_trib().map(|c| c.as_str()), Some("200003"));
+
+        // Remover a classe (None) volta ao padrão integral.
+        p.atualizar(
+            "SKU-1".into(),
+            "Produto".into(),
+            "87083090".into(),
+            "UN".into(),
+            "Geral".into(),
+            None,
+            true,
+            None,
+        )
+        .expect("sem classe");
+        assert!(p.classe_trib().is_none());
     }
 
     #[test]
@@ -373,6 +442,7 @@ mod tests {
                 "Freios".into(),
                 None,
                 true,
+                None,
             ),
             Err(DomainError::BusinessRule(_))
         ));
@@ -389,6 +459,7 @@ mod tests {
             "Freios".into(),
             Some("Bosch".into()),
             true,
+            None,
         )
         .expect("atualizar");
         assert_eq!(p.unidade().as_str(), "UN");

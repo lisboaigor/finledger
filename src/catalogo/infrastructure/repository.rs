@@ -22,6 +22,9 @@ pub struct ProdutoResult {
     pub marca: Option<String>,
     pub ativo: bool,
     pub controla_estoque: bool,
+    #[sqlx(default)]
+    #[serde(default)]
+    pub c_class_trib: Option<String>,
 }
 
 pub struct PostgresProdutoRepository {
@@ -40,7 +43,7 @@ impl PostgresProdutoRepository {
     pub async fn listar(&self) -> Result<Vec<ProdutoResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque
+            "SELECT produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque, c_class_trib
              FROM proj_produtos WHERE tenant_id = $1 ORDER BY descricao",
         )
         .bind(tenant_id)
@@ -52,7 +55,7 @@ impl PostgresProdutoRepository {
     pub async fn buscar(&self, produto_id: Uuid) -> Result<Option<ProdutoResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque
+            "SELECT produto_id, sku, descricao, ncm, unidade, preco_custo, preco_venda, categoria, marca, ativo, controla_estoque, c_class_trib
              FROM proj_produtos WHERE produto_id = $1 AND tenant_id = $2",
         )
         .bind(produto_id)

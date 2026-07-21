@@ -7,21 +7,40 @@ use uuid::Uuid;
 use super::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
 use crate::error::AppError;
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
-use crate::fiscal::domain::value_objects::{ImpostoItem, ItemNF, ModeloNF};
+use crate::fiscal::domain::tributacao::{
+    ClasseTributaria, ContextoFiscal, FaseTransicao, MotorTributario, PerfilFiscal,
+};
+use crate::fiscal::domain::value_objects::{ItemNF, ModeloNF};
+use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::repository::PostgresNotaFiscalRepository;
 use crate::fiscal::infrastructure::sefaz::{SefazClient, SefazError};
 use crate::shared::{load_aggregate, salvar_aggregate};
+use crate::tenants::repository::TenantRepository;
 use crate::vendas::domain::events::ItemVendaSnapshot;
 
-pub struct FiscalHandlers<S: SefazClient> {
+pub struct FiscalHandlers<S: SefazClient, A: AliquotaProvider> {
     pub(crate) repo: Arc<PostgresNotaFiscalRepository>,
     pub(crate) sefaz: Arc<S>,
+    pub(crate) aliquotas: Arc<A>,
+    pub(crate) tenants: Arc<TenantRepository>,
     pub(crate) bus: EventBus,
 }
 
-impl<S: SefazClient> FiscalHandlers<S> {
-    pub fn new(repo: Arc<PostgresNotaFiscalRepository>, sefaz: Arc<S>, bus: EventBus) -> Self {
-        Self { repo, sefaz, bus }
+impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
+    pub fn new(
+        repo: Arc<PostgresNotaFiscalRepository>,
+        sefaz: Arc<S>,
+        aliquotas: Arc<A>,
+        tenants: Arc<TenantRepository>,
+        bus: EventBus,
+    ) -> Self {
+        Self {
+            repo,
+            sefaz,
+            aliquotas,
+            tenants,
+            bus,
+        }
     }
 
     pub async fn gerar_e_transmitir(
@@ -159,18 +178,44 @@ impl<S: SefazClient> FiscalHandlers<S> {
         itens: &[ItemVendaSnapshot],
         modelo: &ModeloNF,
     ) -> Result<Vec<ItemNF>, AppError> {
+        // Perfil e fase resolvidos uma vez por NF; os valores calculados ficam
+        // congelados no evento — replay/retransmissão nunca recalcula.
+        let perfil = self
+            .tenants
+            .obter_perfil_fiscal()
+            .await?
+            .para_dominio()?
+            .unwrap_or_else(PerfilFiscal::padrao_legado);
+        let data_emissao = chrono::Utc::now().date_naive();
+        let ctx = ContextoFiscal {
+            fase: FaseTransicao::de_data(data_emissao),
+            perfil,
+        };
+
         let mut result = Vec::with_capacity(itens.len());
         for item in itens {
             let produto_id = Uuid::parse_str(&item.produto_id).map_err(AppError::infra)?;
-            let ncm: String =
-                sqlx::query_scalar("SELECT ncm FROM proj_produtos WHERE produto_id = $1")
-                    .bind(produto_id)
-                    .fetch_optional(self.repo.pool())
-                    .await
-                    .map_err(AppError::infra)?
-                    .unwrap_or_else(|| "00000000".into());
+            let linha: Option<(String, Option<String>)> = sqlx::query_as(
+                "SELECT ncm, c_class_trib FROM proj_produtos WHERE produto_id = $1",
+            )
+            .bind(produto_id)
+            .fetch_optional(self.repo.pool())
+            .await
+            .map_err(AppError::infra)?;
+            let (ncm, classe_produto) = linha.unwrap_or(("00000000".into(), None));
+
+            let classe_vo = classe_produto
+                .map(ClasseTributaria::try_from)
+                .transpose()
+                .map_err(AppError::Domain)?;
+            let classe = self.aliquotas.classe_info(classe_vo.as_ref()).await?;
+            let aliquotas = self
+                .aliquotas
+                .resolver(data_emissao, &ctx.perfil, &classe.classe, &ncm)
+                .await?;
 
             let total = item.preco_unitario_centavos * item.quantidade as i64;
+            let imposto = MotorTributario::calcular_item(&ctx, &aliquotas, &classe, total);
             result.push(ItemNF::novo(
                 produto_id,
                 item.sku.clone(),
@@ -179,7 +224,7 @@ impl<S: SefazClient> FiscalHandlers<S> {
                 modelo.cfop_padrao().into(),
                 item.quantidade,
                 item.preco_unitario_centavos,
-                ImpostoItem::calcular(total),
+                imposto,
             )?);
         }
         Ok(result)

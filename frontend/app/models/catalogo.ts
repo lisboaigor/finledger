@@ -14,6 +14,8 @@ export interface Produto {
     /** FALSE para serviços/mão de obra — ficam fora da checagem de estoque
      * em vendas e orçamentos. */
     controla_estoque: boolean
+    /** Classe tributária (cClassTrib) da reforma; null = tributação integral. */
+    c_class_trib: string | null
 }
 
 export interface ProdutoDados {
@@ -24,6 +26,7 @@ export interface ProdutoDados {
     categoria: string
     marca: string | null
     controla_estoque: boolean
+    classe_trib: string | null
 }
 
 export interface ProdutoPrecos {

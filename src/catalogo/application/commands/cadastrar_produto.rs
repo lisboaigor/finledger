@@ -25,6 +25,9 @@ pub struct CadastrarProduto {
     /// FALSE para serviços/itens sem estoque físico (ex.: mão de obra).
     #[serde(default = "default_true")]
     pub controla_estoque: bool,
+    /// Classe tributária (cClassTrib) da reforma; ausente = tributação integral.
+    #[serde(default)]
+    pub classe_trib: Option<String>,
 }
 
 /// Manipuladores de comandos para o catálogo de produtos.
@@ -45,6 +48,7 @@ impl CommandHandler<CadastrarProduto> for CatalogoHandlers {
             cmd.categoria,
             cmd.marca,
             cmd.controla_estoque,
+            cmd.classe_trib,
         )?;
         let id = *produto.id();
         self.salvar(&mut produto).await?;

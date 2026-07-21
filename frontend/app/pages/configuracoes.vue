@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Box, Building2, Check, LoaderCircle, Pencil, Tag, Trash2, TrendingUp } from '@lucide/vue'
+import { Box, Building2, Check, Landmark, LoaderCircle, Pencil, Tag, Trash2, TrendingUp } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 const vm = useConfiguracoesViewModel()
@@ -150,6 +151,102 @@ onMounted(vm.carregar)
 
             <Button v-if="vm.isAdmin" class="mt-4 self-start" :disabled="vm.salvando" @click="vm.salvar">
                 <LoaderCircle v-if="vm.salvando" class="size-4 animate-spin" />
+                <Check v-else class="size-4" />
+                Salvar
+            </Button>
+        </AppFieldset>
+
+        <AppFieldset v-if="!vm.loading" legend="Perfil fiscal" class="mt-4">
+            <template #legend>
+                <span class="flex items-center gap-2">
+                    <Landmark class="size-4" />
+                    <span>Perfil fiscal</span>
+                </span>
+            </template>
+
+            <p class="mb-4 max-w-2xl text-sm text-muted-foreground">
+                Determina como os impostos das notas fiscais são calculados, já seguindo a transição da
+                reforma tributária (CBS/IBS). Sem regime configurado, o sistema mantém o comportamento
+                padrão (Simples Nacional em SP). Com regime preenchido, UF, município e CRT são obrigatórios.
+            </p>
+
+            <div class="flex max-w-2xl flex-col gap-4">
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="flex flex-col gap-2">
+                        <label for="regime-select" class="text-sm font-medium">Regime tributário</label>
+                        <Select v-model="vm.perfilRegime" :disabled="!vm.isAdmin">
+                            <SelectTrigger id="regime-select" class="w-full">
+                                <SelectValue placeholder="Padrão (não configurado)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem v-for="o in vm.regimesTributarios" :key="o.value" :value="o.value">
+                                    {{ o.label }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label for="crt-select" class="text-sm font-medium">CRT (código de regime na NF-e)</label>
+                        <Select v-model="vm.perfilCrt" :disabled="!vm.isAdmin">
+                            <SelectTrigger id="crt-select" class="w-full">
+                                <SelectValue placeholder="Selecione" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem v-for="o in vm.opcoesCrt" :key="o.value" :value="o.value">
+                                    {{ o.label }}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="flex flex-col gap-2">
+                        <label for="uf-select" class="text-sm font-medium">UF</label>
+                        <Select v-model="vm.perfilUf" :disabled="!vm.isAdmin">
+                            <SelectTrigger id="uf-select" class="w-full">
+                                <SelectValue placeholder="Selecione" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem v-for="uf in vm.ufs" :key="uf" :value="uf">{{ uf }}</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label for="municipio-ibge" class="text-sm font-medium">Município (código IBGE, 7 dígitos)</label>
+                        <Input
+                            id="municipio-ibge"
+                            v-model="vm.perfilMunicipio"
+                            :disabled="!vm.isAdmin"
+                            placeholder="Ex.: 3550308 (São Paulo)"
+                        />
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-3">
+                    <Checkbox id="ibs-cbs-regular" v-model="vm.perfilIbsCbsRegular" :disabled="!vm.isAdmin" />
+                    <label for="ibs-cbs-regular" class="text-sm" :class="{ 'cursor-pointer': vm.isAdmin }">
+                        <span class="block font-medium">Optante pelo regime regular de IBS/CBS</span>
+                        <span class="text-muted-foreground">
+                            Só se aplica ao Simples Nacional: a opção pelo regime regular (LC 214/2025) permite
+                            que seus clientes aproveitem crédito de IBS/CBS. Sem a opção, os valores destacados
+                            na nota são informativos e o recolhimento segue dentro do DAS.
+                        </span>
+                    </label>
+                </div>
+            </div>
+
+            <p v-if="!vm.isAdmin" class="mt-3 text-sm text-muted-foreground">
+                Apenas administradores podem alterar o perfil fiscal.
+            </p>
+
+            <Button
+                v-if="vm.isAdmin"
+                class="mt-4 self-start"
+                :disabled="vm.salvandoPerfilFiscal"
+                @click="vm.salvarPerfilFiscal"
+            >
+                <LoaderCircle v-if="vm.salvandoPerfilFiscal" class="size-4 animate-spin" />
                 <Check v-else class="size-4" />
                 Salvar
             </Button>

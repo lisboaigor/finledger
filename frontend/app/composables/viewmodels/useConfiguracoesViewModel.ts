@@ -1,8 +1,10 @@
 import {
     atualizarConfiguracoes,
+    atualizarPerfilFiscal,
     definirCustoFixo,
     listarCustosFixos,
     obterConfiguracoes,
+    obterPerfilFiscal,
     removerCustoFixo,
 } from '~/models/configuracoes'
 import type { CustoFixo } from '~/models/configuracoes'
@@ -99,7 +101,12 @@ export function useConfiguracoesViewModel() {
                 cfg.meta_faturamento_mensal_centavos == null
                     ? null
                     : cfg.meta_faturamento_mensal_centavos / 100
-            await Promise.all([carregarMargens(), carregarCustosFixos(), carregarBreakEven()])
+            await Promise.all([
+                carregarMargens(),
+                carregarCustosFixos(),
+                carregarBreakEven(),
+                carregarPerfilFiscal(),
+            ])
         } catch (e) {
             notifyError(apiErrorMessage(e))
         } finally {
@@ -296,6 +303,59 @@ export function useConfiguracoesViewModel() {
         }
     }
 
+    // --- Perfil fiscal (reforma tributária) ---
+    // Regime vazio = motor tributário no comportamento legado; com regime
+    // preenchido, UF/município/CRT viram obrigatórios (validados no backend).
+    const perfilRegime = ref<string>('')
+    const perfilUf = ref<string>('')
+    const perfilMunicipio = ref<string>('')
+    const perfilCrt = ref<number | null>(null)
+    const perfilIbsCbsRegular = ref(false)
+    const salvandoPerfilFiscal = ref(false)
+
+    const regimesTributarios = [
+        { value: 'simples_nacional', label: 'Simples Nacional' },
+        { value: 'lucro_presumido', label: 'Lucro Presumido' },
+        { value: 'lucro_real', label: 'Lucro Real' },
+    ]
+    const opcoesCrt = [
+        { value: 1, label: '1 — Simples Nacional' },
+        { value: 2, label: '2 — Simples (sublimite excedido)' },
+        { value: 3, label: '3 — Regime Normal' },
+        { value: 4, label: '4 — MEI' },
+    ]
+    const ufs = [
+        'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA',
+        'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
+    ]
+
+    async function carregarPerfilFiscal() {
+        const p = await obterPerfilFiscal(apiFetch)
+        perfilRegime.value = p.regime_tributario ?? ''
+        perfilUf.value = p.uf ?? ''
+        perfilMunicipio.value = p.codigo_municipio ?? ''
+        perfilCrt.value = p.crt
+        perfilIbsCbsRegular.value = p.ibs_cbs_regime_regular
+    }
+
+    async function salvarPerfilFiscal() {
+        salvandoPerfilFiscal.value = true
+        try {
+            await atualizarPerfilFiscal(apiFetch, {
+                regime_tributario: perfilRegime.value || null,
+                uf: perfilUf.value || null,
+                codigo_municipio: perfilMunicipio.value.trim() || null,
+                crt: perfilCrt.value,
+                ibs_cbs_regime_regular: perfilIbsCbsRegular.value,
+            })
+            notifySuccess('Salvo', 'Perfil fiscal atualizado.')
+        } catch (e) {
+            notifyError(apiErrorMessage(e))
+        } finally {
+            salvandoPerfilFiscal.value = false
+        }
+    }
+
     // --- Ponto de equilíbrio ---
     const produtos = ref<Produto[]>([])
 
@@ -357,6 +417,17 @@ export function useConfiguracoesViewModel() {
         salvarCusto,
         editarCusto,
         removerCusto,
+        // perfil fiscal
+        perfilRegime,
+        perfilUf,
+        perfilMunicipio,
+        perfilCrt,
+        perfilIbsCbsRegular,
+        salvandoPerfilFiscal,
+        regimesTributarios,
+        opcoesCrt,
+        ufs,
+        salvarPerfilFiscal,
         // break-even
         breakEven,
         carregar,

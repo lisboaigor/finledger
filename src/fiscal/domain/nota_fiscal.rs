@@ -180,12 +180,12 @@ mod tests {
         ItemNF::novo(
             Uuid::new_v4(),
             "SKU-001".into(),
-            "Filtro de óleo".into(),
-            "84212310".into(),
+            "Mouse sem fio".into(),
+            "84716053".into(),
             ModeloNF::NFCe.cfop_padrao().into(),
             2,
             5000,
-            ImpostoItem::calcular(10_000),
+            ImpostoItem::calcular_legado_simples(10_000),
         )
         .expect("item válido")
     }

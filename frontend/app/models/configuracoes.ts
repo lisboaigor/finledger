@@ -40,6 +40,24 @@ export function atualizarConfiguracoes(apiFetch: ApiFetch, dados: Configuracoes)
     return apiFetch('/configuracoes', { method: 'PUT', body: dados })
 }
 
+/** Perfil fiscal do tenant (reforma tributária): alimenta o motor de cálculo
+ * de impostos na emissão de NF. Regime null = motor no comportamento legado. */
+export interface PerfilFiscal {
+    regime_tributario: string | null
+    uf: string | null
+    codigo_municipio: string | null
+    crt: number | null
+    ibs_cbs_regime_regular: boolean
+}
+
+export function obterPerfilFiscal(apiFetch: ApiFetch) {
+    return apiFetch<PerfilFiscal>('/configuracoes/perfil-fiscal')
+}
+
+export function atualizarPerfilFiscal(apiFetch: ApiFetch, perfil: PerfilFiscal) {
+    return apiFetch('/configuracoes/perfil-fiscal', { method: 'PUT', body: perfil })
+}
+
 export function listarCustosFixos(apiFetch: ApiFetch) {
     return apiFetch<{ custos: CustoFixo[] }>('/configuracoes/custos-fixos')
 }

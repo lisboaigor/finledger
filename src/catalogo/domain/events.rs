@@ -15,6 +15,8 @@ pub enum CatalogoEvent {
         categoria: String,
         marca: Option<String>,
         controla_estoque: bool,
+        /// Classe tributária (cClassTrib) da reforma tributária.
+        c_class_trib: Option<String>,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },
@@ -36,6 +38,7 @@ pub enum CatalogoEvent {
         categoria: String,
         marca: Option<String>,
         controla_estoque: bool,
+        c_class_trib: Option<String>,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },

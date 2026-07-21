@@ -14,6 +14,7 @@ use crate::crm::application::handler::CrmHandlers;
 use crate::estoque::application::handler::EstoqueHandlers;
 use crate::financeiro::application::handler::FinanceiroHandlers;
 use crate::fiscal::application::handler::FiscalHandlers;
+use crate::fiscal::infrastructure::aliquotas::PostgresAliquotaProvider;
 use crate::fiscal::infrastructure::sefaz::StubSefazClient;
 use crate::fornecedores::application::handler::FornecedoresHandlers;
 use crate::identity::application::handler::IdentityHandlers;
@@ -61,7 +62,7 @@ define_handlers_and_state! {
     orcamentos: Arc<OrcamentosHandlers>,
     compras: Arc<ComprasHandlers>,
     financeiro: Arc<FinanceiroHandlers>,
-    fiscal: Arc<FiscalHandlers<StubSefazClient>>,
+    fiscal: Arc<FiscalHandlers<StubSefazClient, PostgresAliquotaProvider>>,
     identity: Arc<IdentityHandlers>,
     bi: Arc<BiHandlers>,
 }
@@ -79,6 +80,8 @@ impl Handlers {
         let fiscal = Arc::new(FiscalHandlers::new(
             repos.notas_fiscais,
             Arc::new(StubSefazClient),
+            Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+            repos.tenants.clone(),
             bus.clone(),
         ));
 

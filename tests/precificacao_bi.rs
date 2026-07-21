@@ -90,6 +90,7 @@ async fn giro_reflete_vendas_e_saldo() -> TestResult {
                 categoria: "Filtros".into(),
                 marca: None,
                 controla_estoque: true,
+                classe_trib: None,
             },
         )
         .await
@@ -187,6 +188,7 @@ async fn score_saude_compoe_metricas_do_tenant() -> TestResult {
                 categoria: "Correias".into(),
                 marca: None,
                 controla_estoque: true,
+                classe_trib: None,
             },
         )
         .await

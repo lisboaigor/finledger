@@ -30,6 +30,8 @@ impl PostgresNotaFiscalRepository {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
             "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, cancelamento_pendente,
+                    icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
+                    cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
                     CASE status
                         WHEN 'gerada' THEN 'Gerada'
                         WHEN 'transmitida' THEN 'Transmitida'
@@ -50,6 +52,8 @@ impl PostgresNotaFiscalRepository {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
             "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, cancelamento_pendente,
+                    icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
+                    cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
                     CASE status
                         WHEN 'gerada' THEN 'Gerada'
                         WHEN 'transmitida' THEN 'Transmitida'

@@ -28,6 +28,7 @@ fn cmd_cadastrar(sku: &str) -> CadastrarProduto {
         categoria: "Freios".into(),
         marca: None,
         controla_estoque: true,
+        classe_trib: None,
     }
 }
 
@@ -75,6 +76,7 @@ async fn ciclo_completo_de_crud_do_produto() -> TestResult {
                 categoria: "Freios".into(),
                 marca: None,
                 controla_estoque: true,
+                classe_trib: None,
             },
         )
         .await

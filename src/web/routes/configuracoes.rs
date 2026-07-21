@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::{AuthUser, Roles};
-use crate::tenants::repository::{ConfigPrecificacao, DadosEmpresa, Marca};
+use crate::tenants::repository::{ConfigPrecificacao, DadosEmpresa, Marca, PerfilFiscalDto};
 use crate::web::{error::ApiError, state::TenantLookupState};
 
 #[derive(Serialize)]
@@ -67,6 +67,30 @@ pub async fn atualizar(
     s.tenants
         .atualizar_config_precificacao(body.precificacao)
         .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Perfil fiscal (reforma tributária) ───────────────────────────────────────
+// Regime tributário, UF/município e CRT que alimentam o motor tributário na
+// emissão de NF. Leitura livre (a tela mostra o perfil a qualquer usuário);
+// escrita só admin. Perfil ausente = motor no fallback legado.
+
+pub async fn obter_perfil_fiscal(
+    State(s): State<TenantLookupState>,
+    _user: AuthUser,
+) -> Result<Json<PerfilFiscalDto>, ApiError> {
+    Ok(Json(s.tenants.obter_perfil_fiscal().await?))
+}
+
+pub async fn atualizar_perfil_fiscal(
+    State(s): State<TenantLookupState>,
+    user: AuthUser,
+    Json(dto): Json<PerfilFiscalDto>,
+) -> Result<StatusCode, ApiError> {
+    user.exigir_role(Roles::ADMIN)?;
+    // A validação de domínio (UF/município/CRT/regime) roda dentro de
+    // atualizar_perfil_fiscal, antes do UPDATE.
+    s.tenants.atualizar_perfil_fiscal(dto).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

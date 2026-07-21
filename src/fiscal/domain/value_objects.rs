@@ -33,20 +33,45 @@ pub enum StatusNFe {
     Cancelada,
 }
 
-/// Cálculo simplificado de impostos por item (alíquotas padrão SP Simples Nacional).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Impostos calculados de um item, congelados no evento `NotaFiscalGerada` —
+/// replays nunca recalculam. Campos novos da reforma tributária (CBS/IBS/IS)
+/// entram com `#[serde(default)]` para eventos gravados antes do motor
+/// continuarem deserializando.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImpostoItem {
     pub icms_centavos: i64,
     pub pis_centavos: i64,
     pub cofins_centavos: i64,
+    #[serde(default)]
+    pub iss_centavos: i64,
+    #[serde(default)]
+    pub cbs_centavos: i64,
+    #[serde(default)]
+    pub ibs_uf_centavos: i64,
+    #[serde(default)]
+    pub ibs_mun_centavos: i64,
+    #[serde(default)]
+    pub is_centavos: i64,
+    /// cClassTrib (NT 2025.002) usado no cálculo — preenche os grupos gIBSCBS
+    /// do XML quando a emissão real entrar.
+    #[serde(default)]
+    pub c_class_trib: Option<String>,
+    #[serde(default)]
+    pub cst_ibs_cbs: Option<String>,
 }
 
 impl ImpostoItem {
-    pub fn calcular(valor_total_centavos: i64) -> Self {
+    /// Cálculo legado hardcoded (SP Simples Nacional: ICMS 18%, PIS 0,65%,
+    /// COFINS 3%) em aritmética inteira half-up. É o que o motor produz para
+    /// tenants sem perfil fiscal configurado — preservado como fallback e para
+    /// fixtures de teste.
+    pub fn calcular_legado_simples(valor_total_centavos: i64) -> Self {
+        let bps = |bps: i64| ((valor_total_centavos as i128 * bps as i128 + 5_000) / 10_000) as i64;
         Self {
-            icms_centavos: (valor_total_centavos as f64 * 0.18) as i64,
-            pis_centavos: (valor_total_centavos as f64 * 0.0065) as i64,
-            cofins_centavos: (valor_total_centavos as f64 * 0.03) as i64,
+            icms_centavos: bps(1800),
+            pis_centavos: bps(65),
+            cofins_centavos: bps(300),
+            ..Self::default()
         }
     }
 }
@@ -135,21 +160,107 @@ pub struct TotaisNF {
     pub icms_centavos: i64,
     pub pis_centavos: i64,
     pub cofins_centavos: i64,
+    #[serde(default)]
+    pub iss_centavos: i64,
+    #[serde(default)]
+    pub cbs_centavos: i64,
+    #[serde(default)]
+    pub ibs_uf_centavos: i64,
+    #[serde(default)]
+    pub ibs_mun_centavos: i64,
+    #[serde(default)]
+    pub is_centavos: i64,
     pub total_centavos: i64,
 }
 
 impl TotaisNF {
     pub fn calcular(itens: &[ItemNF]) -> Self {
         let produtos = itens.iter().map(ItemNF::total_centavos).sum::<i64>();
-        let icms = itens.iter().map(|i| i.imposto.icms_centavos).sum::<i64>();
-        let pis = itens.iter().map(|i| i.imposto.pis_centavos).sum::<i64>();
-        let cofins = itens.iter().map(|i| i.imposto.cofins_centavos).sum::<i64>();
+        let soma = |f: fn(&ImpostoItem) -> i64| itens.iter().map(|i| f(&i.imposto)).sum::<i64>();
         Self {
             produtos_centavos: produtos,
-            icms_centavos: icms,
-            pis_centavos: pis,
-            cofins_centavos: cofins,
+            icms_centavos: soma(|i| i.icms_centavos),
+            pis_centavos: soma(|i| i.pis_centavos),
+            cofins_centavos: soma(|i| i.cofins_centavos),
+            iss_centavos: soma(|i| i.iss_centavos),
+            cbs_centavos: soma(|i| i.cbs_centavos),
+            ibs_uf_centavos: soma(|i| i.ibs_uf_centavos),
+            ibs_mun_centavos: soma(|i| i.ibs_mun_centavos),
+            is_centavos: soma(|i| i.is_centavos),
             total_centavos: produtos,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn novo_item(
+        ncm: &str,
+        cfop: &str,
+        quantidade: u32,
+        valor_unitario_centavos: i64,
+    ) -> DomainResult<ItemNF> {
+        ItemNF::novo(
+            Uuid::new_v4(),
+            "SKU-001".into(),
+            "Produto".into(),
+            ncm.into(),
+            cfop.into(),
+            quantidade,
+            valor_unitario_centavos,
+            ImpostoItem::default(),
+        )
+    }
+
+    // As invariantes prometidas pelo construtor ("invariante por construção"):
+    // cada rejeição precisa de prova, não só do comentário.
+
+    #[test]
+    fn item_quantidade_zero_rejeitado() {
+        assert!(matches!(
+            novo_item("84716053", "5102", 0, 1000),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn item_valor_negativo_rejeitado() {
+        assert!(matches!(
+            novo_item("84716053", "5102", 1, -1),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn item_cfop_vazio_rejeitado() {
+        assert!(matches!(
+            novo_item("84716053", "   ", 1, 1000),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn item_ncm_malformado_rejeitado() {
+        assert!(matches!(
+            novo_item("123", "5102", 1, 1000),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn item_valido_calcula_total() {
+        let item = novo_item("84716053", "5102", 3, 2500).expect("item válido");
+        assert_eq!(item.total_centavos(), 7500);
+        assert_eq!(item.ncm(), "84716053");
+    }
+
+    #[test]
+    fn totais_de_nf_sem_itens_sao_zero() {
+        let totais = TotaisNF::calcular(&[]);
+        assert_eq!(totais.produtos_centavos, 0);
+        assert_eq!(totais.total_centavos, 0);
+        assert_eq!(totais.cbs_centavos, 0);
     }
 }

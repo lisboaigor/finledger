@@ -10,7 +10,9 @@ use uuid::Uuid;
 use crate::auth::{AuthUser, Role};
 use crate::error::AppError;
 use crate::fiscal::application::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
-use crate::fiscal::application::queries::{BuscarNotaFiscal, ListarNotasFiscais};
+use crate::fiscal::application::queries::{
+    BuscarNotaFiscal, ListarClassesTributarias, ListarNotasFiscais,
+};
 use crate::web::{error::ApiError, state::FiscalState};
 
 pub async fn listar(
@@ -31,6 +33,16 @@ pub async fn buscar(
     let nota = query_dispatch(&*s.fiscal, BuscarNotaFiscal { nf_id }).await?;
     nota.map(|n| Json(json!(n)))
         .ok_or_else(|| AppError::NotFound.into())
+}
+
+/// Classes tributárias de referência (dado global) — qualquer usuário
+/// autenticado: o select do catálogo é preenchido por quem cadastra produto.
+pub async fn listar_classes_tributarias(
+    State(s): State<FiscalState>,
+    _user: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let classes = query_dispatch(&*s.fiscal, ListarClassesTributarias).await?;
+    Ok(Json(json!({ "classes": classes })))
 }
 
 pub async fn cancelar(

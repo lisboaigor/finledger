@@ -26,7 +26,8 @@ use finledger::financeiro::infrastructure::repository::{
     PostgresContaPagarRepository, PostgresContaReceberRepository,
 };
 use finledger::fiscal::infrastructure::{
-    repository::PostgresNotaFiscalRepository, sefaz::StubSefazClient,
+    aliquotas::PostgresAliquotaProvider, repository::PostgresNotaFiscalRepository,
+    sefaz::StubSefazClient,
 };
 use finledger::identity::application::commands::{Login, RegistrarUsuario};
 use finledger::identity::application::handler::IdentityHandlers;
@@ -85,6 +86,7 @@ async fn produto_de_a_invisivel_para_b() -> TestResult {
                 categoria: "Teste".into(),
                 marca: None,
                 controla_estoque: true,
+                classe_trib: None,
             })
             .await
             .expect("cadastrar produto A falhou");
@@ -210,6 +212,8 @@ async fn venda_de_a_nao_gera_dados_em_b() -> TestResult {
     let fiscal = Arc::new(FiscalHandlers::new(
         Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
         Arc::new(StubSefazClient),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
         bus.clone(),
     ));
 

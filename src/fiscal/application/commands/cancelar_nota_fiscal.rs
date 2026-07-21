@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::fiscal::application::handler::FiscalHandlers;
+use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::sefaz::SefazClient;
 
 /// Cancela uma NF já autorizada. Deve ser feito dentro de 24h da autorização.
@@ -16,7 +17,7 @@ pub struct CancelarNotaFiscal {
     pub motivo: String,
 }
 
-impl<S: SefazClient> CommandHandler<CancelarNotaFiscal> for FiscalHandlers<S> {
+impl<S: SefazClient, A: AliquotaProvider> CommandHandler<CancelarNotaFiscal> for FiscalHandlers<S, A> {
     type Output = ();
     type Error = AppError;
 

@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::fiscal::application::handler::FiscalHandlers;
 use crate::fiscal::application::queries::listar_notas_fiscais::NotaFiscalResult;
+use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::sefaz::SefazClient;
 
 #[derive(Query)]
@@ -14,7 +15,7 @@ pub struct BuscarNotaFiscal {
     pub nf_id: Uuid,
 }
 
-impl<S: SefazClient> QueryHandler<BuscarNotaFiscal> for FiscalHandlers<S> {
+impl<S: SefazClient, A: AliquotaProvider> QueryHandler<BuscarNotaFiscal> for FiscalHandlers<S, A> {
     type Error = AppError;
 
     async fn handle(&self, q: BuscarNotaFiscal) -> Result<Option<NotaFiscalResult>, AppError> {

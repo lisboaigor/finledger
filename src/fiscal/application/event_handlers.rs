@@ -4,15 +4,16 @@ use std::sync::Arc;
 use pharos_app::EventHandler;
 
 use super::handler::FiscalHandlers;
+use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::sefaz::SefazClient;
 use crate::vendas::domain::events::VendaEvent;
 
 /// Dispara a emissão de NF-e / NFC-e quando uma venda é confirmada.
-pub struct FiscalVendaEventHandler<S: SefazClient> {
-    pub fiscal: Arc<FiscalHandlers<S>>,
+pub struct FiscalVendaEventHandler<S: SefazClient, A: AliquotaProvider> {
+    pub fiscal: Arc<FiscalHandlers<S, A>>,
 }
 
-impl<S: SefazClient> EventHandler<VendaEvent> for FiscalVendaEventHandler<S> {
+impl<S: SefazClient, A: AliquotaProvider> EventHandler<VendaEvent> for FiscalVendaEventHandler<S, A> {
     type Error = Infallible;
 
     async fn handle(&self, event: &VendaEvent) -> Result<(), Infallible> {

@@ -45,6 +45,7 @@ async fn proj_produto_reflete_cadastro() -> TestResult {
                 categoria: "Freios".into(),
                 marca: None,
                 controla_estoque: true,
+                classe_trib: None,
             })
             .await
             .expect("cadastrar produto falhou")

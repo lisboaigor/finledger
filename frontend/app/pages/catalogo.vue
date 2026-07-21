@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const vm = useCatalogoViewModel()
 const { formatCentavos } = useFormat()
@@ -137,6 +138,22 @@ onMounted(vm.carregar)
                                 <InputMoney v-model="vm.form.preco_venda" />
                             </Field>
                         </div>
+                        <Field>
+                            <FieldLabel>Classe tributária (cClassTrib)</FieldLabel>
+                            <Select v-model="vm.form.classe_trib">
+                                <SelectTrigger class="w-full">
+                                    <SelectValue placeholder="Tributação integral (padrão)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem v-for="c in vm.classesTributarias" :key="c.c_class_trib" :value="c.c_class_trib">
+                                        {{ c.c_class_trib }} — {{ c.descricao }}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p class="text-xs text-muted-foreground">
+                                Enquadramento de IBS/CBS da reforma tributária. Vazio = tributação integral.
+                            </p>
+                        </Field>
                         <div class="flex items-center gap-2">
                             <Checkbox id="controla-estoque" v-model="vm.form.controla_estoque" />
                             <label for="controla-estoque" class="text-sm cursor-pointer">

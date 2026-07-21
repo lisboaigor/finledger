@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::fiscal::application::handler::FiscalHandlers;
+use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::sefaz::SefazClient;
 
 /// Retransmite uma NF que está no status Gerada (ex: após correção de rejeição).
@@ -13,7 +14,7 @@ pub struct RetransmitirNotaFiscal {
     pub nf_id: Uuid,
 }
 
-impl<S: SefazClient> CommandHandler<RetransmitirNotaFiscal> for FiscalHandlers<S> {
+impl<S: SefazClient, A: AliquotaProvider> CommandHandler<RetransmitirNotaFiscal> for FiscalHandlers<S, A> {
     type Output = ();
     type Error = AppError;
 

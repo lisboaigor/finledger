@@ -258,6 +258,12 @@ fn configuracoes_routes() -> ApiRouter {
             "/configuracoes/custos-fixos/{nome}",
             delete(routes::configuracoes::remover_custo_fixo),
         )
+        // Perfil fiscal do tenant (motor tributário — escrita só admin)
+        .route(
+            "/configuracoes/perfil-fiscal",
+            get(routes::configuracoes::obter_perfil_fiscal)
+                .put(routes::configuracoes::atualizar_perfil_fiscal),
+        )
 }
 
 fn auth_routes() -> ApiRouter {
@@ -522,6 +528,11 @@ fn financeiro_routes() -> ApiRouter {
 fn fiscal_routes() -> ApiRouter {
     Router::new()
         .route("/fiscal/notas", get(routes::fiscal::listar))
+        // Classes tributárias de referência (cClassTrib) para o catálogo
+        .route(
+            "/fiscal/classes-tributarias",
+            get(routes::fiscal::listar_classes_tributarias),
+        )
         .route("/fiscal/notas/{id}", get(routes::fiscal::buscar))
         .route(
             "/fiscal/notas/{id}/cancelar",

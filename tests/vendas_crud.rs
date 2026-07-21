@@ -325,6 +325,7 @@ async fn adicionar_item_de_servico_ignora_saldo_de_estoque() -> TestResult {
                 categoria: "Serviços".into(),
                 marca: None,
                 controla_estoque: false,
+                classe_trib: None,
             },
         )
         .await
