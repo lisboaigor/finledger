@@ -1,0 +1,882 @@
+{
+  "info": {
+    "name": "Finledger ERP",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000" },
+    { "key": "token", "value": "" },
+    { "key": "produto_id", "value": "" },
+    { "key": "cliente_id", "value": "" },
+    { "key": "fornecedor_id", "value": "" },
+    { "key": "venda_id", "value": "" },
+    { "key": "item_id", "value": "" },
+    { "key": "orcamento_id", "value": "" },
+    { "key": "pedido_id", "value": "" },
+    { "key": "conta_id", "value": "" },
+    { "key": "nf_id", "value": "" },
+    { "key": "usuario_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.token) { pm.collectionVariables.set('token', json.token); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"senha\": \"admin\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Registrar Usuário",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.usuario_id) { pm.collectionVariables.set('usuario_id', json.usuario_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/auth/registrar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"vendedor1\",\n  \"senha\": \"senha123\",\n  \"roles\": [\"vendedor\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Listar Usuários",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/auth/usuarios"
+          }
+        },
+        {
+          "name": "Buscar Usuário",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/auth/usuarios/{{usuario_id}}"
+          }
+        },
+        {
+          "name": "Alterar Senha",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/auth/alterar-senha",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"senha_atual\": \"admin\",\n  \"nova_senha\": \"nova_senha123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Desativar Usuário",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/auth/usuarios/{{usuario_id}}/desativar"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catálogo",
+      "item": [
+        {
+          "name": "Listar Produtos",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/catalogo/produtos"
+          }
+        },
+        {
+          "name": "Cadastrar Produto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.produto_id) { pm.collectionVariables.set('produto_id', json.produto_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/catalogo/produtos",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"PROD-001\",\n  \"descricao\": \"Filtro de Óleo\",\n  \"ncm\": \"84212300\",\n  \"unidade\": \"UN\",\n  \"preco_custo_centavos\": 1500,\n  \"preco_venda_centavos\": 2500,\n  \"categoria\": \"Filtros\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Produto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/catalogo/produtos/{{produto_id}}"
+          }
+        },
+        {
+          "name": "Atualizar Produto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "PUT",
+            "url": "{{base_url}}/catalogo/produtos/{{produto_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"PROD-001\",\n  \"descricao\": \"Filtro de Óleo Premium\",\n  \"ncm\": \"84212300\",\n  \"unidade\": \"UN\",\n  \"categoria\": \"Filtros\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Atualizar Preços",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "PUT",
+            "url": "{{base_url}}/catalogo/produtos/{{produto_id}}/precos",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preco_custo_centavos\": 1800,\n  \"preco_venda_centavos\": 2900\n}"
+            }
+          }
+        },
+        {
+          "name": "Desativar Produto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/catalogo/produtos/{{produto_id}}/desativar"
+          }
+        },
+        {
+          "name": "Reativar Produto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/catalogo/produtos/{{produto_id}}/reativar"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CRM",
+      "item": [
+        {
+          "name": "Listar Clientes",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/crm/clientes"
+          }
+        },
+        {
+          "name": "Cadastrar Cliente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.cliente_id) { pm.collectionVariables.set('cliente_id', json.cliente_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/crm/clientes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"João da Silva\",\n  \"cpf_cnpj\": \"123.456.789-00\",\n  \"telefone\": \"(11) 99999-0000\",\n  \"email\": \"joao@email.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Cliente",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/crm/clientes/{{cliente_id}}"
+          }
+        },
+        {
+          "name": "Atualizar Cliente",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "PUT",
+            "url": "{{base_url}}/crm/clientes/{{cliente_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nome\": \"João da Silva\",\n  \"telefone\": \"(11) 98888-0000\",\n  \"email\": \"joao.novo@email.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Bloquear Cliente",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/crm/clientes/{{cliente_id}}/bloquear",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Inadimplência\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Desbloquear Cliente",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/crm/clientes/{{cliente_id}}/desbloquear"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Estoque",
+      "item": [
+        {
+          "name": "Listar Saldos",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/estoque"
+          }
+        },
+        {
+          "name": "Buscar Saldo do Produto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/estoque/{{produto_id}}"
+          }
+        },
+        {
+          "name": "Registrar Entrada",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/estoque/entradas",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"produto_id\": \"{{produto_id}}\",\n  \"quantidade\": 100,\n  \"custo_unitario_centavos\": 1500,\n  \"motivo\": \"Compra NF 001\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Ajustar Estoque",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/estoque/{{produto_id}}/ajuste",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantidade_nova\": 95,\n  \"justificativa\": \"Inventário físico\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fornecedores",
+      "item": [
+        {
+          "name": "Listar Fornecedores",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/fornecedores"
+          }
+        },
+        {
+          "name": "Cadastrar Fornecedor",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.fornecedor_id) { pm.collectionVariables.set('fornecedor_id', json.fornecedor_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/fornecedores",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"razao_social\": \"Auto Peças Brasil Ltda\",\n  \"cnpj\": \"12.345.678/0001-90\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Fornecedor",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/fornecedores/{{fornecedor_id}}"
+          }
+        },
+        {
+          "name": "Atualizar Fornecedor",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "PUT",
+            "url": "{{base_url}}/fornecedores/{{fornecedor_id}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"razao_social\": \"Auto Peças Brasil S/A\",\n  \"cnpj\": \"12.345.678/0001-90\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Desativar Fornecedor",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/fornecedores/{{fornecedor_id}}/desativar"
+          }
+        },
+        {
+          "name": "Reativar Fornecedor",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/fornecedores/{{fornecedor_id}}/reativar"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vendas",
+      "item": [
+        {
+          "name": "Listar Vendas",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/vendas"
+          }
+        },
+        {
+          "name": "Iniciar Venda",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.venda_id) { pm.collectionVariables.set('venda_id', json.venda_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_id\": \"{{cliente_id}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Venda",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/vendas/{{venda_id}}"
+          }
+        },
+        {
+          "name": "Adicionar Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.item_id) { pm.collectionVariables.set('item_id', json.item_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/itens",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"produto_id\": \"{{produto_id}}\",\n  \"sku\": \"PROD-001\",\n  \"descricao\": \"Filtro de Óleo\",\n  \"quantidade\": 2,\n  \"preco_unitario_centavos\": 2500\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover Item",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "DELETE",
+            "url": "{{base_url}}/vendas/{{venda_id}}/itens/{{item_id}}"
+          }
+        },
+        {
+          "name": "Definir Forma de Pagamento — Dinheiro",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/forma-pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forma\": \"Dinheiro\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Definir Forma de Pagamento — Pix",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/forma-pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forma\": \"Pix\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Definir Forma de Pagamento — Cartão Crédito",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/forma-pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forma\": { \"CartaoCredito\": { \"parcelas\": 3 } }\n}"
+            }
+          }
+        },
+        {
+          "name": "Definir Forma de Pagamento — Prazo",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/forma-pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forma\": { \"Prazo\": { \"dias\": 30 } }\n}"
+            }
+          }
+        },
+        {
+          "name": "Confirmar Venda",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/confirmar"
+          }
+        },
+        {
+          "name": "Cancelar Venda",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/vendas/{{venda_id}}/cancelar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Cliente desistiu\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orçamentos",
+      "item": [
+        {
+          "name": "Listar Orçamentos",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/orcamentos"
+          }
+        },
+        {
+          "name": "Criar Orçamento",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.orcamento_id) { pm.collectionVariables.set('orcamento_id', json.orcamento_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cliente_id\": \"{{cliente_id}}\",\n  \"validade_dias\": 15\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Orçamento",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}"
+          }
+        },
+        {
+          "name": "Adicionar Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.item_id) { pm.collectionVariables.set('item_id', json.item_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/itens",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"produto_id\": \"{{produto_id}}\",\n  \"sku\": \"PROD-001\",\n  \"descricao\": \"Filtro de Óleo\",\n  \"quantidade\": 1,\n  \"preco_unitario_centavos\": 2500\n}"
+            }
+          }
+        },
+        {
+          "name": "Remover Item",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "DELETE",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/itens/{{item_id}}"
+          }
+        },
+        {
+          "name": "Aplicar Desconto",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/desconto",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"desconto_centavos\": 200\n}"
+            }
+          }
+        },
+        {
+          "name": "Emitir Orçamento",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/emitir"
+          }
+        },
+        {
+          "name": "Aceitar Orçamento",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/aceitar"
+          }
+        },
+        {
+          "name": "Recusar Orçamento",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/orcamentos/{{orcamento_id}}/recusar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Preço fora do orçamento do cliente\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Compras",
+      "item": [
+        {
+          "name": "Listar Pedidos",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/compras/pedidos"
+          }
+        },
+        {
+          "name": "Gerar Pedido de Compra",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.pedido_id) { pm.collectionVariables.set('pedido_id', json.pedido_id); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/compras/pedidos",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fornecedor_id\": \"{{fornecedor_id}}\",\n  \"prazo_pagamento_dias\": 30,\n  \"itens\": [\n    {\n      \"produto_id\": \"{{produto_id}}\",\n      \"quantidade\": 50,\n      \"custo_unitario_centavos\": 1500\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Buscar Pedido",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/compras/pedidos/{{pedido_id}}"
+          }
+        },
+        {
+          "name": "Aprovar Pedido",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/compras/pedidos/{{pedido_id}}/aprovar"
+          }
+        },
+        {
+          "name": "Enviar Pedido",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/compras/pedidos/{{pedido_id}}/enviar"
+          }
+        },
+        {
+          "name": "Receber Mercadoria",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/compras/pedidos/{{pedido_id}}/receber",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itens_recebidos\": [\n    {\n      \"produto_id\": \"{{produto_id}}\",\n      \"quantidade\": 50\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Cancelar Pedido",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/compras/pedidos/{{pedido_id}}/cancelar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Fornecedor sem estoque\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Financeiro",
+      "item": [
+        {
+          "name": "Listar Contas a Receber",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/financeiro/contas-receber"
+          }
+        },
+        {
+          "name": "Buscar Conta a Receber",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/financeiro/contas-receber/{{conta_id}}"
+          }
+        },
+        {
+          "name": "Registrar Pagamento Recebido",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/financeiro/contas-receber/{{conta_id}}/pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"valor_centavos\": 5000\n}"
+            }
+          }
+        },
+        {
+          "name": "Estornar Conta a Receber",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/financeiro/contas-receber/{{conta_id}}/estornar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Erro de lançamento\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Listar Contas a Pagar",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/financeiro/contas-pagar"
+          }
+        },
+        {
+          "name": "Buscar Conta a Pagar",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/financeiro/contas-pagar/{{conta_id}}"
+          }
+        },
+        {
+          "name": "Efetuar Pagamento",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/financeiro/contas-pagar/{{conta_id}}/pagamento",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"valor_centavos\": 75000\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fiscal",
+      "item": [
+        {
+          "name": "Listar Notas Fiscais",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/fiscal/notas"
+          }
+        },
+        {
+          "name": "Buscar Nota Fiscal",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "GET",
+            "url": "{{base_url}}/fiscal/notas/{{nf_id}}"
+          }
+        },
+        {
+          "name": "Cancelar Nota Fiscal",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/fiscal/notas/{{nf_id}}/cancelar",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Venda cancelada pelo cliente\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Retransmitir Nota Fiscal",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}" }] },
+            "method": "POST",
+            "url": "{{base_url}}/fiscal/notas/{{nf_id}}/retransmitir"
+          }
+        }
+      ]
+    }
+  ]
+}

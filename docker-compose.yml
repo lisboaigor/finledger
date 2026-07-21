@@ -1,0 +1,57 @@
+name: finledger
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: finledger
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker/postgres/seed_demo.sql:/docker-entrypoint-initdb.d/seed_demo.sql
+      # y- roda após init.sql/seed; zz- após as migrações (ordem alfabética do initdb).
+      - ./docker/postgres/migrations:/migrations
+      - ./docker/postgres/apply-migrations.sh:/docker-entrypoint-initdb.d/y-migrations.sh
+      - ./docker/postgres/bi.sql:/docker-entrypoint-initdb.d/zz-bi.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d finledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    # host.docker.internal resolves out of the box on Docker Desktop (macOS);
+    # host-gateway makes the same name work on Linux engines.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.6.1
+    ports:
+      # Grafana listens on 3000 internally; 3000/3001 are taken by the app.
+      - "3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,22 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
+pub mod arquivamento;
+pub mod auth;
+pub mod backoffice;
+pub mod bi;
+pub mod bootstrap;
+pub mod catalogo;
+pub mod compras;
+pub mod crm;
+pub mod error;
+pub mod estoque;
+pub mod financeiro;
+pub mod fiscal;
+pub mod fornecedores;
+pub mod identity;
+pub mod orcamentos;
+pub mod projections;
+pub mod shared;
+pub mod tenants;
+pub mod vendas;
+pub mod web;

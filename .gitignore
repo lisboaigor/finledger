@@ -1,0 +1,36 @@
+# Rust
+/target
+# Cargo.lock é versionado: binário usa build --locked (Dockerfile) e as
+# dependências git pharos-* ficam pinadas por commit.
+
+# Claude Code
+.claude
+
+# Ambiente
+.env
+.env.*
+# Mas versiona os templates de exemplo.
+!.env.example
+!.env.prod.example
+
+# IDEs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Nuxt / Node
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/.env
+
+# Artefatos stray de shadcn/pnpm rodados na raiz por engano — o projeto Node
+# vive em frontend/; a raiz é Rust (Cargo).
+/node_modules/
+/package.json
+/pnpm-lock.yaml
+
+# Config local do deploy (usuário/IP da VPS)
+scripts/.deploy.env

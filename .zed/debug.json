@@ -1,0 +1,31 @@
+[
+  {
+    "label": "🐞 Backend (Rust + Postgres)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "sh",
+      "args": ["${ZED_WORKTREE_ROOT}/.zed/start-stack.sh"],
+    },
+    "program": "${ZED_WORKTREE_ROOT}/target/debug/finledger",
+    "cwd": "${ZED_WORKTREE_ROOT}",
+    "args": [],
+    "env": {
+      "RUST_LOG": "finledger=debug,auth=debug,web=debug",
+      "RUST_BACKTRACE": "1",
+      "APP_ENV": "dev",
+    },
+    "sourceLanguages": ["rust"],
+  },
+  {
+    "label": "🌐 Frontend (Nuxt)",
+    "adapter": "JavaScript",
+    "type": "node",
+    "request": "launch",
+    "program": "${ZED_WORKTREE_ROOT}/frontend/node_modules/nuxt/bin/nuxt.mjs",
+    "args": ["dev"],
+    "cwd": "${ZED_WORKTREE_ROOT}/frontend",
+    "console": "integratedTerminal",
+    "skipFiles": ["<node_internals>/**"],
+  },
+]

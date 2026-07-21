@@ -1,0 +1,15 @@
+pub mod auth;
+pub mod backoffice;
+pub mod bi;
+pub mod catalogo;
+pub mod compras;
+pub mod configuracoes;
+pub mod crm;
+pub mod estoque;
+pub mod financeiro;
+pub mod fiscal;
+pub mod fornecedores;
+pub mod orcamentos;
+pub mod tenants_publico;
+pub mod tls;
+pub mod vendas;

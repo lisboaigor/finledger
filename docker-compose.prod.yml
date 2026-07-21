@@ -1,0 +1,143 @@
+# Infraestrutura completa da Finledger em um único compose:
+#   caddy (entrada :80) → frontend (Nuxt SSR) + backend (Rust) → postgres
+#
+# Uso:
+#   cp .env.prod.example .env.prod   # e preencha os segredos
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Postgres NÃO publica porta no host (acesso só pela rede interna do compose).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env.prod}
+      POSTGRES_DB: finledger
+      # Consumidas por prod-roles.sh no primeiro initdb (ver docker/postgres/prod-roles.sh).
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?defina APP_DB_PASSWORD no .env.prod}
+      ADMIN_DB_USERNAME: ${ADMIN_DB_USERNAME:-}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
+    # Porta exposta APENAS no loopback do host — acesso remoto via túnel SSH:
+    #   ssh -N -L 5432:127.0.0.1:5432 root@<ip-da-vps>
+    # (-N: só encaminha a porta, não abre shell remoto — Ctrl+C encerra o túnel)
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # y- roda após o init.sql; zz- após as migrações (ordem alfabética do initdb).
+      # Em bancos já existentes, aplicar bi.sql e migrações manualmente via psql
+      # (docker exec ... psql -U postgres -d finledger -f /migrations/00X_*.sql).
+      - ./docker/postgres/migrations:/migrations:ro
+      - ./docker/postgres/apply-migrations.sh:/docker-entrypoint-initdb.d/y-migrations.sh:ro
+      - ./docker/postgres/bi.sql:/docker-entrypoint-initdb.d/zz-bi.sql:ro
+      - ./docker/postgres/prod-roles.sh:/docker-entrypoint-initdb.d/zz-prod-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d finledger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      # Primeiro boot roda o initdb inteiro (init.sql + prod-roles.sh) antes de
+      # aceitar conexões — sem esta folga o compose desiste dos dependentes.
+      start_period: 60s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    environment:
+      # `postgres` é o hostname do serviço na rede do compose.
+      DATABASE_URL: postgres://finledger:${APP_DB_PASSWORD:?defina APP_DB_PASSWORD no .env.prod}@postgres:5432/finledger
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env.prod}
+      RUST_LOG: ${RUST_LOG:-finledger=info,tower_http=info}
+      # Origens permitidas no CORS (ex.: https://*.finledger.app). Vazio = só localhost.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # Em produção o subdomínio deve casar com o tenant do token.
+      TENANT_SUBDOMAIN_ENFORCED: ${TENANT_SUBDOMAIN_ENFORCED:-1}
+      # Seed demo desligado por padrão em produção.
+      SEED_DEMO_TENANT: ${SEED_DEMO_TENANT:-}
+      # Superadmin do backoffice (só cria se ambos definidos).
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:-}
+      # Habilita GET /tls/ask (autorização do TLS on-demand do Caddy).
+      TLS_BASE_DOMAIN: ${TLS_BASE_DOMAIN:-}
+      SEFAZ_INTEGRACAO_ATIVA: ${SEFAZ_INTEGRACAO_ATIVA:-false}
+      # 0.0.0.0 (em vez do default 127.0.0.1) para o Prometheus, em outro
+      # container da mesma rede, conseguir raspar /metrics. Porta não é
+      # publicada no host nem roteada pelo Caddy — só alcançável internamente.
+      METRICS_ADDR: 0.0.0.0:9464
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      # Base da API no cliente — o Caddy roteia /api/* para o backend.
+      NUXT_PUBLIC_API_BASE: /api
+      # Sem isso o apex (finledger.com.br, 3 labels) seria lido como tenant.
+      NUXT_PUBLIC_BASE_DOMAIN: ${TLS_BASE_DOMAIN:-}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      # E-mail de contato das contas ACME (avisos de expiração do Let's Encrypt).
+      ACME_EMAIL: ${ACME_EMAIL:?defina ACME_EMAIL no .env.prod}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 (QUIC)
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  # Observabilidade: NÃO expostas ao Caddy nem à internet — acesso só via
+  # túnel SSH (mesmo padrão do postgres, que também só publica em 127.0.0.1):
+  #   ssh -N -L 9090:127.0.0.1:9090 -L 3002:127.0.0.1:3002 root@<ip-da-vps>
+  # (-N: só encaminha as portas, não abre shell remoto — Ctrl+C encerra o túnel)
+  # e então abrir http://localhost:9090 (Prometheus) / http://localhost:3002 (Grafana).
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.1
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?defina GRAFANA_ADMIN_PASSWORD no .env.prod}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  grafana_data:

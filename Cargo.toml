@@ -1,0 +1,43 @@
+[package]
+name = "finledger"
+version = "0.1.0"
+edition = "2024"
+description = "ERP multi-tenant em Rust/Axum com Event Sourcing e frontend Nuxt 4"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lisboaigor/finledger"
+
+[dependencies]
+pharos-core   = { git = "https://github.com/lisboaigor/pharos-rs" }
+pharos-macros = { git = "https://github.com/lisboaigor/pharos-rs" }
+pharos-app = { git = "https://github.com/lisboaigor/pharos-rs", features = ["tower", "tenant-task-local"] }
+pharos-postgres = { git = "https://github.com/lisboaigor/pharos-rs" }
+pharos-axum = { git = "https://github.com/lisboaigor/pharos-rs" }
+anyhow = "1.0.103"
+argon2 = { version = "0.5", features = ["std"] }
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.24",   features = ["v4", "v7", "serde"] }
+serde = { version = "1",   features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1",   features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+axum  = "0.8"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7.0", features = ["cors", "trace", "timeout"] }
+tower_governor = { version = "0.8", features = ["axum"] }
+governor = "0.10"
+sqlx  = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "uuid", "chrono"] }
+dotenvy = "0.15"
+axum-prometheus = "0.10.0"
+
+[dev-dependencies]
+testcontainers = "0.27.3"
+
+[lints.clippy]
+# unwrap() and expect() are banned in production code. Use `?` or an explicit
+# error type. In tests, prefer `?` on async functions. For infallible panics
+# (e.g. mutex poisoning, test fixtures), use `let Ok(...) else { panic!() }`.
+unwrap_used = "deny"
+expect_used = "deny"

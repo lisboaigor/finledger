@@ -1,0 +1,14 @@
+# Contexto de build do backend — mantém a imagem enxuta e o build rápido.
+target/
+frontend/
+.git/
+.github/
+.zed/
+.claude/
+.idea/
+.vscode/
+**/*.log
+.env
+.env.*
+!.env.example
+.DS_Store

@@ -1,0 +1,39 @@
+# Entrada única da stack. Roteia por caminho, preservando o Host original
+# (necessário para a resolução de tenant por subdomínio) e setando X-Forwarded-For
+# (usado pelo rate limiter do backend via SmartIpKeyExtractor).
+#
+# TLS: como os tenants vivem em subdomínios (*.finledger.com.br) e o Let's Encrypt
+# só emite wildcard via desafio DNS-01 (sem plugin Hostinger disponível), usamos
+# TLS ON-DEMAND: o Caddy emite um certificado individual por hostname (HTTP-01)
+# no primeiro acesso, perguntando antes ao backend (GET /tls/ask?domain=...) se o
+# hostname corresponde a um tenant ativo — isso impede emissão para nomes inválidos.
+# Requer DNS: A finledger.com.br → VPS e A *.finledger.com.br → VPS.
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://backend:3000/tls/ask
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+
+	# /api/* → backend, removendo o prefixo /api (o backend expõe /auth, /catalogo, ...).
+	handle_path /api/* {
+		reverse_proxy backend:3000
+	}
+
+	# Demais rotas → frontend Nuxt (SSR).
+	handle {
+		reverse_proxy frontend:3001
+	}
+
+	encode gzip
+}
+
+# O desafio ACME HTTP-01 é respondido pelo próprio Caddy na :80 antes deste site.
+http:// {
+	redir https://{host}{uri} 308
+}
