@@ -186,11 +186,20 @@ pub struct TotaisNF {
     pub ibs_mun_centavos: i64,
     #[serde(default)]
     pub is_centavos: i64,
+    /// Desconto global da venda destacado na NF (`#[serde(default)]`: eventos
+    /// anteriores ao campo deserializam com zero — total = produtos, como era).
+    #[serde(default)]
+    pub desconto_centavos: i64,
+    /// Total da nota: produtos − desconto.
     pub total_centavos: i64,
 }
 
 impl TotaisNF {
     pub fn calcular(itens: &[ItemNF]) -> Self {
+        Self::calcular_com_desconto(itens, 0)
+    }
+
+    pub fn calcular_com_desconto(itens: &[ItemNF], desconto_centavos: i64) -> Self {
         let produtos = itens.iter().map(ItemNF::total_centavos).sum::<i64>();
         let soma = |f: fn(&ImpostoItem) -> i64| itens.iter().map(|i| f(&i.imposto)).sum::<i64>();
         Self {
@@ -203,7 +212,8 @@ impl TotaisNF {
             ibs_uf_centavos: soma(|i| i.ibs_uf_centavos),
             ibs_mun_centavos: soma(|i| i.ibs_mun_centavos),
             is_centavos: soma(|i| i.is_centavos),
-            total_centavos: produtos,
+            desconto_centavos,
+            total_centavos: produtos - desconto_centavos,
         }
     }
 }

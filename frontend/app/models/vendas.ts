@@ -4,7 +4,10 @@ export interface Venda {
     venda_id: string
     vendedor_id: string
     cliente_id: string | null
+    /** Total LÍQUIDO (bruto dos itens − desconto). */
     total_centavos: number
+    /** Desconto global da venda (0 quando não há; ex.: herdado do orçamento). */
+    desconto_centavos: number
     status: string
     forma_pagamento: string | null
 }

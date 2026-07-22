@@ -407,6 +407,10 @@ fn vendas_routes() -> ApiRouter {
             delete(routes::vendas::remover_item),
         )
         .route(
+            "/vendas/{id}/desconto",
+            post(routes::vendas::aplicar_desconto),
+        )
+        .route(
             "/vendas/{id}/forma-pagamento",
             post(routes::vendas::forma_pagamento),
         )

@@ -323,3 +323,131 @@ async fn adicionar_item_sem_estoque_bloqueado_quando_flag_desligada() -> TestRes
     .await;
     Ok(())
 }
+/// Issue #1: o desconto do orçamento tem que sobreviver à conversão em venda —
+/// a venda (e a conta a receber e a NF geradas na confirmação) cobra o total
+/// LÍQUIDO, não o bruto dos itens.
+#[tokio::test]
+async fn desconto_do_orcamento_chega_liquido_na_venda_cr_e_nf() -> TestResult {
+    use finledger::vendas::application::commands::{ConfirmarVenda, DefinirFormaPagamento};
+    use finledger::vendas::domain::value_objects::FormaPagamento;
+
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let app = montar_app(&pool);
+    let tenant_id = new_tenant_id();
+    let pool_check = pool.clone();
+
+    in_tenant(tenant_id, async move {
+        let orcamento_id = dispatch(
+            &*app.orcamentos,
+            CriarOrcamento {
+                vendedor_id: Uuid::new_v4(),
+                cliente_id: None,
+                cliente_avulso: None,
+                validade_dias: 15,
+            },
+        )
+        .await
+        .expect("criar")
+        .as_uuid();
+
+        // Dois itens (60.000 + 40.000) e desconto de 999 — valor de propósito
+        // que não divide exato no rateio fiscal.
+        for (sku, preco) in [("SKU-A", 60_000i64), ("SKU-B", 40_000i64)] {
+            dispatch(
+                &*app.orcamentos,
+                AdicionarItemOrcamento {
+                    orcamento_id,
+                    produto_id: Uuid::new_v4(),
+                    sku: sku.into(),
+                    descricao: sku.into(),
+                    quantidade: 1,
+                    preco_unitario_centavos: preco,
+                },
+            )
+            .await
+            .expect("item");
+        }
+        dispatch(
+            &*app.orcamentos,
+            AplicarDescontoOrcamento {
+                orcamento_id,
+                desconto_centavos: 999,
+            },
+        )
+        .await
+        .expect("desconto");
+        dispatch(&*app.orcamentos, EmitirOrcamento { orcamento_id })
+            .await
+            .expect("emitir");
+        dispatch(&*app.orcamentos, AceitarOrcamento { orcamento_id })
+            .await
+            .expect("aceitar");
+        aguardar_projecoes().await;
+
+        // A venda EmAndamento gerada já carrega o desconto e o total líquido.
+        let vendas = query_dispatch(
+            &*app.vendas,
+            ListarVendas {
+                produto_busca: None,
+                apenas_abertas: true,
+            },
+        )
+        .await
+        .expect("listar vendas");
+        assert_eq!(vendas.len(), 1);
+        let venda = &vendas[0];
+        assert_eq!(venda.desconto_centavos, 999, "desconto herdado do orçamento");
+        assert_eq!(venda.total_centavos, 99_001, "total líquido, não bruto");
+
+        // Confirma no PDV → CR e NF nascem com o líquido.
+        dispatch(
+            &*app.vendas,
+            DefinirFormaPagamento {
+                venda_id: venda.venda_id,
+                forma: FormaPagamento::Prazo { dias: 30 },
+            },
+        )
+        .await
+        .expect("forma");
+        dispatch(
+            &*app.vendas,
+            ConfirmarVenda {
+                venda_id: venda.venda_id,
+            },
+        )
+        .await
+        .expect("confirmar");
+        aguardar_projecoes().await;
+
+        let (total_venda, desconto_venda): (i64, i64) = sqlx::query_as(
+            "SELECT total_centavos, desconto_centavos FROM proj_vendas WHERE venda_id = $1",
+        )
+        .bind(venda.venda_id)
+        .fetch_one(&pool_check)
+        .await
+        .expect("proj venda");
+        assert_eq!(total_venda, 99_001);
+        assert_eq!(desconto_venda, 999);
+
+        let valor_cr: i64 =
+            sqlx::query_scalar("SELECT valor_original FROM proj_contas_receber WHERE venda_id = $1")
+                .bind(venda.venda_id)
+                .fetch_one(&pool_check)
+                .await
+                .expect("proj CR");
+        assert_eq!(valor_cr, 99_001, "conta a receber cobra o líquido");
+
+        let (total_nf, desconto_nf): (i64, i64) = sqlx::query_as(
+            "SELECT total_centavos, desconto_centavos FROM proj_notas_fiscais WHERE venda_id = $1",
+        )
+        .bind(venda.venda_id)
+        .fetch_one(&pool_check)
+        .await
+        .expect("proj NF");
+        assert_eq!(total_nf, 99_001, "NF sai com o total líquido");
+        assert_eq!(desconto_nf, 999, "NF destaca o desconto");
+    })
+    .await;
+    Ok(())
+}

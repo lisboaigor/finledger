@@ -31,7 +31,7 @@ impl PostgresVendaRepository {
     ) -> Result<Vec<VendaResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT venda_id, vendedor_id, cliente_id, total_centavos,
+            "SELECT venda_id, vendedor_id, cliente_id, total_centavos, desconto_centavos,
                     CASE status
                         WHEN 'iniciada' THEN 'Em Andamento'
                         WHEN 'confirmada' THEN 'Confirmada'
@@ -62,7 +62,7 @@ impl PostgresVendaRepository {
     pub async fn listar_lixeira(&self) -> Result<Vec<VendaArquivadaResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT venda_id, vendedor_id, cliente_id, total_centavos,
+            "SELECT venda_id, vendedor_id, cliente_id, total_centavos, desconto_centavos,
                     CASE status
                         WHEN 'iniciada' THEN 'Em Andamento'
                         WHEN 'confirmada' THEN 'Confirmada'
@@ -101,7 +101,7 @@ impl PostgresVendaRepository {
     pub async fn buscar(&self, venda_id: Uuid) -> Result<Option<VendaDetalhes>, AppError> {
         let tenant_id = current_tenant_id()?;
         let venda: Option<VendaResult> = sqlx::query_as(
-            "SELECT venda_id, vendedor_id, cliente_id, total_centavos,
+            "SELECT venda_id, vendedor_id, cliente_id, total_centavos, desconto_centavos,
                     CASE status
                         WHEN 'iniciada' THEN 'Em Andamento'
                         WHEN 'confirmada' THEN 'Confirmada'

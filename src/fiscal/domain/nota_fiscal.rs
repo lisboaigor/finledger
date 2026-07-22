@@ -36,6 +36,7 @@ pub struct NotaFiscal {
 }
 
 impl NotaFiscal {
+    #[allow(clippy::too_many_arguments)] // flat args mirram a emissão
     pub fn gerar(
         venda_id: Uuid,
         cliente_id: Option<Uuid>,
@@ -43,6 +44,7 @@ impl NotaFiscal {
         serie: String,
         numero: u32,
         itens: Vec<ItemNF>,
+        desconto_centavos: i64,
         ibs_cbs_informativo: bool,
     ) -> DomainResult<Self> {
         if itens.is_empty() {
@@ -50,7 +52,12 @@ impl NotaFiscal {
                 "NF deve ter ao menos um item".into(),
             ));
         }
-        let totais = TotaisNF::calcular(&itens);
+        let totais = TotaisNF::calcular_com_desconto(&itens, desconto_centavos);
+        if desconto_centavos < 0 || desconto_centavos > totais.produtos_centavos {
+            return Err(DomainError::Validation(
+                "Desconto da NF deve ser entre zero e o total dos produtos".into(),
+            ));
+        }
         let id = NotaFiscalId::new();
         let now = Utc::now();
         let mut events = AggregateEvents::default();
@@ -200,6 +207,7 @@ mod tests {
             "001".into(),
             1,
             vec![item_nf()],
+            0,
             false,
         )
         .expect("deve gerar NF válida")
@@ -214,6 +222,40 @@ mod tests {
             "001".into(),
             1,
             vec![],
+            0,
+            false,
+        );
+        assert!(matches!(err, Err(DomainError::Validation(_))));
+    }
+
+    #[test]
+    fn gerar_com_desconto_destaca_e_reduz_o_total() {
+        let nf = NotaFiscal::gerar(
+            Uuid::new_v4(),
+            None,
+            ModeloNF::NFCe,
+            "001".into(),
+            1,
+            vec![item_nf()], // 2 × 5000 = 10.000
+            1_500,
+            false,
+        )
+        .expect("NF com desconto");
+        assert_eq!(nf.totais.produtos_centavos, 10_000);
+        assert_eq!(nf.totais.desconto_centavos, 1_500);
+        assert_eq!(nf.totais.total_centavos, 8_500);
+    }
+
+    #[test]
+    fn gerar_com_desconto_acima_dos_produtos_retorna_erro() {
+        let err = NotaFiscal::gerar(
+            Uuid::new_v4(),
+            None,
+            ModeloNF::NFCe,
+            "001".into(),
+            1,
+            vec![item_nf()], // 10.000
+            10_001,
             false,
         );
         assert!(matches!(err, Err(DomainError::Validation(_))));

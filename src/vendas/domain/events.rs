@@ -51,13 +51,27 @@ pub enum VendaEvent {
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },
+    /// Desconto global aplicado sobre a venda (ex.: herdado do orçamento
+    /// convertido). O total da venda passa a ser bruto dos itens − desconto.
+    DescontoVendaAplicado {
+        #[aggregate_id]
+        venda_id: String,
+        desconto_centavos: i64,
+        #[occurred_at]
+        occurred_at: DateTime<Utc>,
+    },
     VendaConfirmada {
         #[aggregate_id]
         venda_id: String,
         vendedor_id: String,
         cliente_id: Option<String>,
         itens: Vec<ItemVendaSnapshot>,
+        /// Total LÍQUIDO cobrado (bruto dos itens − desconto) — financeiro (CR)
+        /// e projeções consomem este valor diretamente.
         total_centavos: i64,
+        /// Desconto global da venda; o fiscal rateia sobre os itens para a
+        /// base de cálculo dos impostos.
+        desconto_centavos: i64,
         forma_pagamento: FormaPagamento,
         #[occurred_at]
         occurred_at: DateTime<Utc>,

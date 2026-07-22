@@ -126,6 +126,7 @@ async fn giro_reflete_vendas_e_saldo() -> TestResult {
                 quantidade: 3,
                 preco_unitario_centavos: 2_000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await
@@ -216,6 +217,7 @@ async fn margem_liquida_desconta_impostos_da_nf() -> TestResult {
                 quantidade: 2,
                 preco_unitario_centavos: 10_000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await
@@ -341,6 +343,7 @@ async fn score_saude_compoe_metricas_do_tenant() -> TestResult {
                 quantidade: 2,
                 preco_unitario_centavos: 10_000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await

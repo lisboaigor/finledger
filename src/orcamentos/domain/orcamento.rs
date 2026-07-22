@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use pharos_core::{AggregateEvents, DomainError, DomainResult};
 use pharos_macros::{AggregateRoot, Entity, id_type};
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,12 @@ pub struct Orcamento {
     pub desconto_centavos: i64,
     pub validade_dias: u16,
     pub status: StatusOrcamento,
+    /// Data de criação do orçamento — âncora do vencimento (`criado_em +
+    /// validade_dias`). Snapshots antigos não têm o campo: o default `Utc::now`
+    /// faz o vencimento contar a partir da primeira releitura, o comportamento
+    /// que já valia antes (vencimento deslizante) — nunca MENOS prazo que antes.
+    #[serde(default = "Utc::now")]
+    pub criado_em: DateTime<Utc>,
 }
 
 impl Orcamento {
@@ -70,6 +76,7 @@ impl Orcamento {
     ) -> DomainResult<Self> {
         let identificacao_cliente = IdentificacaoCliente::resolver(cliente_id, cliente_avulso)?;
         let id = OrcamentoId::new();
+        let criado_em = Utc::now();
         let mut events = AggregateEvents::default();
 
         events.raise(OrcamentoEvent::OrcamentoCriado {
@@ -78,7 +85,7 @@ impl Orcamento {
             cliente_id: identificacao_cliente.cliente_id().map(|c| c.to_string()),
             cliente_avulso: identificacao_cliente.nome_avulso().map(str::to_string),
             validade_dias,
-            occurred_at: Utc::now(),
+            occurred_at: criado_em,
         });
 
         Ok(Self {
@@ -91,6 +98,7 @@ impl Orcamento {
             desconto_centavos: 0,
             validade_dias,
             status: StatusOrcamento::Rascunho,
+            criado_em,
         })
     }
 
@@ -273,6 +281,7 @@ impl Orcamento {
             orcamento_id: self.id.to_string(),
             itens: snapshots.clone(),
             total_centavos: total,
+            desconto_centavos: self.desconto_centavos,
             vendedor_id: self.vendedor_id.to_string(),
             cliente_id: self
                 .identificacao_cliente
@@ -324,8 +333,9 @@ impl Orcamento {
         Ok(())
     }
 
-    pub fn vencimento(&self) -> chrono::DateTime<Utc> {
-        Utc::now() + Duration::days(self.validade_dias as i64)
+    /// Vencimento ancorado na data de criação — não desliza a cada consulta.
+    pub fn vencimento(&self) -> DateTime<Utc> {
+        self.criado_em + Duration::days(self.validade_dias as i64)
     }
 
     pub fn total_bruto(&self) -> i64 {

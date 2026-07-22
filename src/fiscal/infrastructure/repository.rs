@@ -29,7 +29,7 @@ impl PostgresNotaFiscalRepository {
     pub async fn listar(&self) -> Result<Vec<NotaFiscalResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, cancelamento_pendente,
+            "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, desconto_centavos, cancelamento_pendente,
                     icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
                     cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
                     CASE status
@@ -51,7 +51,7 @@ impl PostgresNotaFiscalRepository {
     pub async fn buscar(&self, nf_id: Uuid) -> Result<Option<NotaFiscalResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, cancelamento_pendente,
+            "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, desconto_centavos, cancelamento_pendente,
                     icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
                     cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
                     CASE status

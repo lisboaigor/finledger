@@ -63,7 +63,11 @@ pub enum OrcamentoEvent {
         #[aggregate_id]
         orcamento_id: String,
         itens: Vec<ItemOrcamentoSnapshot>,
+        /// Total LÍQUIDO (bruto dos itens − desconto).
         total_centavos: i64,
+        /// Desconto global aplicado no orçamento — o assinante replica na venda
+        /// para o total cobrado (CR/NF) sair líquido, não bruto.
+        desconto_centavos: i64,
         // Vendedor/cliente do orçamento, para o assinante (VendaAPartirDe-
         // OrcamentoHandler) criar a venda EmAndamento já com essas partes.
         vendedor_id: String,

@@ -97,6 +97,33 @@ pub async fn in_tenant<F: Future>(tenant_id: Uuid, f: F) -> F::Output {
         .await
 }
 
+/// Insere um produto direto em `proj_produtos` (atalho de teste para o fluxo
+/// CadastrarProduto + projeção). Necessário porque `AdicionarItemVenda` agora
+/// usa SEMPRE o preço de tabela do catálogo — produto fora do catálogo é erro.
+#[allow(dead_code)]
+pub async fn seed_produto(
+    pool: &Pool,
+    tenant_id: Uuid,
+    produto_id: Uuid,
+    sku: &str,
+    preco_venda_centavos: i64,
+) -> TestResult {
+    sqlx::query(
+        "INSERT INTO proj_produtos
+            (produto_id, tenant_id, sku, descricao, ncm, unidade,
+             preco_custo, preco_venda, categoria, ativo, criado_em, atualizado_em)
+         VALUES ($1, $2, $3, $3, '84716053', 'UN', 0, $4, 'Teste', TRUE, NOW(), NOW())
+         ON CONFLICT (tenant_id, produto_id) DO UPDATE SET preco_venda = EXCLUDED.preco_venda",
+    )
+    .bind(produto_id)
+    .bind(tenant_id)
+    .bind(sku)
+    .bind(preco_venda_centavos)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Insere um tenant na tabela `tenants` e retorna seu UUID.
 #[allow(dead_code)]
 pub async fn create_tenant(pool: &Pool, slug: &str) -> TestResult<Uuid> {

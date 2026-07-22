@@ -1,4 +1,5 @@
 mod adicionar_item_venda;
+mod aplicar_desconto_venda;
 mod atualizar_venda;
 mod cancelar_venda;
 mod confirmar_venda;
@@ -8,6 +9,7 @@ mod iniciar_venda;
 mod remover_item_venda;
 
 pub use adicionar_item_venda::AdicionarItemVenda;
+pub use aplicar_desconto_venda::AplicarDescontoVenda;
 pub use atualizar_venda::AtualizarVenda;
 pub use cancelar_venda::CancelarVenda;
 pub use confirmar_venda::ConfirmarVenda;

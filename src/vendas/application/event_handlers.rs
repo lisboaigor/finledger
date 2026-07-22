@@ -4,7 +4,7 @@ use std::sync::Arc;
 use pharos_app::{CommandHandler, EventHandler};
 use uuid::Uuid;
 
-use super::commands::{AdicionarItemVenda, IniciarVenda};
+use super::commands::{AdicionarItemVenda, AplicarDescontoVenda, IniciarVenda};
 use super::handler::VendasHandlers;
 use crate::orcamentos::application::commands::MarcarConvertidoOrcamento;
 use crate::orcamentos::application::handler::OrcamentosHandlers;
@@ -32,6 +32,7 @@ impl EventHandler<OrcamentoEvent> for VendaAPartirDeOrcamentoHandler {
         let OrcamentoEvent::OrcamentoAceito {
             orcamento_id,
             itens,
+            desconto_centavos,
             vendedor_id,
             cliente_id,
             ..
@@ -60,9 +61,11 @@ impl EventHandler<OrcamentoEvent> for VendaAPartirDeOrcamentoHandler {
             Err(_) => return Ok(()),
         };
 
-        // Replica os itens no preço acordado. `vender_sem_estoque: true` para a
-        // conversão nunca falhar por saldo — a venda ainda é EmAndamento e não
-        // baixa estoque; a checagem real ocorre na confirmação no PDV.
+        // Replica os itens no preço acordado (`preservar_preco_informado`: o
+        // handler não relê o catálogo — o preço do orçamento aceito prevalece).
+        // `vender_sem_estoque: true` para a conversão nunca falhar por saldo —
+        // a venda ainda é EmAndamento e não baixa estoque; a checagem real
+        // ocorre na confirmação no PDV.
         for item in itens {
             let Ok(produto_uuid) = Uuid::parse_str(&item.produto_id) else {
                 continue;
@@ -77,8 +80,28 @@ impl EventHandler<OrcamentoEvent> for VendaAPartirDeOrcamentoHandler {
                     quantidade: item.quantidade,
                     preco_unitario_centavos: item.preco_unitario_centavos,
                     vender_sem_estoque: true,
+                    preservar_preco_informado: true,
                 })
                 .await;
+        }
+
+        // Herda o desconto global do orçamento — sem isto a venda (e a conta a
+        // receber/NF geradas na confirmação) cobraria o total BRUTO.
+        if *desconto_centavos > 0
+            && let Err(err) = self
+                .vendas
+                .handle(AplicarDescontoVenda {
+                    venda_id,
+                    desconto_centavos: *desconto_centavos,
+                })
+                .await
+        {
+            tracing::error!(
+                %venda_id,
+                orcamento_id,
+                error = %err,
+                "falha ao herdar o desconto do orçamento na venda"
+            );
         }
 
         // Liga o orçamento à venda (status → convertido).

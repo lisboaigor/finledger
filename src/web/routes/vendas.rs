@@ -11,8 +11,8 @@ use uuid::Uuid;
 use crate::auth::{AuthUser, Role};
 use crate::error::AppError;
 use crate::vendas::application::commands::{
-    AdicionarItemVenda, AtualizarVenda, CancelarVenda, ConfirmarVenda, DefinirFormaPagamento,
-    DevolverItensVenda, IniciarVenda, RemoverItemVenda,
+    AdicionarItemVenda, AplicarDescontoVenda, AtualizarVenda, CancelarVenda, ConfirmarVenda,
+    DefinirFormaPagamento, DevolverItensVenda, IniciarVenda, RemoverItemVenda,
 };
 use crate::auth::Roles;
 use crate::vendas::application::queries::{BuscarVenda, ListarVendas, ListarVendasArquivadas};
@@ -124,6 +124,18 @@ pub async fn remover_item(
 ) -> Result<StatusCode, ApiError> {
     user.exigir_qualquer_role(&[Role::Vendedor])?;
     dispatch(&*s.vendas, RemoverItemVenda { venda_id, item_id }).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn aplicar_desconto(
+    State(s): State<VendasState>,
+    user: AuthUser,
+    Path(venda_id): Path<Uuid>,
+    Json(mut cmd): Json<AplicarDescontoVenda>,
+) -> Result<StatusCode, ApiError> {
+    user.exigir_qualquer_role(&[Role::Vendedor])?;
+    cmd.venda_id = venda_id;
+    dispatch(&*s.vendas, cmd).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -43,6 +43,11 @@ pub struct Venda {
     pub vendedor_id: Uuid,
     pub cliente_id: Option<Uuid>,
     pub itens: Vec<ItemVenda>,
+    /// Desconto global da venda (herdado do orçamento na conversão).
+    /// `#[serde(default)]`: snapshots persistidos antes do campo deserializam
+    /// com desconto zero — comportamento idêntico ao anterior.
+    #[serde(default)]
+    pub desconto_centavos: i64,
     pub forma_pagamento: Option<FormaPagamento>,
     pub status: StatusVenda,
 }
@@ -64,6 +69,7 @@ impl Venda {
             vendedor_id,
             cliente_id,
             itens: vec![],
+            desconto_centavos: 0,
             forma_pagamento: None,
             status: StatusVenda::EmAndamento,
         }
@@ -135,6 +141,24 @@ impl Venda {
         Ok(())
     }
 
+    /// Aplica um desconto global sobre a venda (só EmAndamento). O total
+    /// cobrado passa a ser bruto dos itens − desconto.
+    pub fn aplicar_desconto(&mut self, desconto_centavos: i64) -> DomainResult<()> {
+        self.garantir_em_andamento()?;
+        if desconto_centavos < 0 || desconto_centavos > self.total_bruto() {
+            return Err(DomainError::Validation(
+                "Desconto inválido: deve ser entre zero e o total dos itens da venda".into(),
+            ));
+        }
+        self.desconto_centavos = desconto_centavos;
+        self.events.raise(VendaEvent::DescontoVendaAplicado {
+            venda_id: self.id.to_string(),
+            desconto_centavos,
+            occurred_at: Utc::now(),
+        });
+        Ok(())
+    }
+
     pub fn definir_forma_pagamento(&mut self, forma: FormaPagamento) -> DomainResult<()> {
         self.garantir_em_andamento()?;
         self.events.raise(VendaEvent::FormaPagamentoDefinida {
@@ -168,6 +192,13 @@ impl Venda {
             .forma_pagamento
             .clone()
             .ok_or_else(|| DomainError::BusinessRule("Forma de pagamento não definida".into()))?;
+        // Itens podem ter sido removidos depois do desconto aplicado — o total
+        // líquido nunca pode ficar negativo.
+        if self.desconto_centavos > self.total_bruto() {
+            return Err(DomainError::BusinessRule(
+                "Desconto excede o total dos itens — ajuste o desconto antes de confirmar".into(),
+            ));
+        }
 
         let total = self.total_centavos();
         let snapshots: Vec<ItemVendaSnapshot> = self
@@ -190,6 +221,7 @@ impl Venda {
             cliente_id: self.cliente_id.map(|c| c.to_string()),
             itens: snapshots,
             total_centavos: total,
+            desconto_centavos: self.desconto_centavos,
             forma_pagamento: forma,
             occurred_at: Utc::now(),
         });
@@ -312,8 +344,14 @@ impl Venda {
         Ok(())
     }
 
-    pub fn total_centavos(&self) -> i64 {
+    /// Soma bruta dos subtotais dos itens, sem desconto.
+    pub fn total_bruto(&self) -> i64 {
         self.itens.iter().map(|i| i.subtotal()).sum()
+    }
+
+    /// Total líquido cobrado: bruto − desconto global.
+    pub fn total_centavos(&self) -> i64 {
+        self.total_bruto() - self.desconto_centavos
     }
 
     fn garantir_em_andamento(&self) -> DomainResult<()> {
@@ -474,6 +512,87 @@ mod tests {
         )
         .expect("item 2");
         assert_eq!(v.total_centavos(), 3500);
+    }
+
+    #[test]
+    fn aplicar_desconto_reduz_o_total_liquido() {
+        let mut v = venda_com_item(); // 1 × 8000
+        v.aplicar_desconto(500).expect("desconto");
+        assert_eq!(v.total_bruto(), 8000);
+        assert_eq!(v.total_centavos(), 7500);
+    }
+
+    #[test]
+    fn aplicar_desconto_acima_do_total_bruto_retorna_erro() {
+        let mut v = venda_com_item(); // 1 × 8000
+        assert!(matches!(
+            v.aplicar_desconto(8001),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn aplicar_desconto_negativo_retorna_erro() {
+        let mut v = venda_com_item();
+        assert!(matches!(
+            v.aplicar_desconto(-1),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn aplicar_desconto_em_venda_confirmada_retorna_erro() {
+        let mut v = venda_com_item();
+        v.confirmar().expect("confirmar");
+        assert!(matches!(
+            v.aplicar_desconto(100),
+            Err(DomainError::BusinessRule(_))
+        ));
+    }
+
+    #[test]
+    fn confirmar_com_desconto_emite_total_liquido_no_evento() {
+        let mut v = venda_com_item(); // 1 × 8000
+        v.aplicar_desconto(1000).expect("desconto");
+        v.confirmar().expect("confirmar");
+        let confirmada = v.events.drain().into_iter().find_map(|e| match e {
+            VendaEvent::VendaConfirmada {
+                total_centavos,
+                desconto_centavos,
+                ..
+            } => Some((total_centavos, desconto_centavos)),
+            _ => None,
+        });
+        assert_eq!(confirmada, Some((7000, 1000)));
+    }
+
+    #[test]
+    fn confirmar_com_desconto_maior_que_o_bruto_apos_remocao_retorna_erro() {
+        let mut v = Venda::iniciar(Uuid::new_v4(), None);
+        let item_caro = v
+            .adicionar_item(
+                Uuid::new_v4(),
+                "A".into(),
+                "A".into(),
+                1,
+                Dinheiro::from_centavos(10_000),
+                Disponibilidade::NaoControlada,
+            )
+            .expect("item caro");
+        v.adicionar_item(
+            Uuid::new_v4(),
+            "B".into(),
+            "B".into(),
+            1,
+            Dinheiro::from_centavos(1_000),
+            Disponibilidade::NaoControlada,
+        )
+        .expect("item barato");
+        v.definir_forma_pagamento(FormaPagamento::Dinheiro)
+            .expect("forma");
+        v.aplicar_desconto(5_000).expect("desconto válido na hora");
+        v.remover_item(item_caro).expect("remover");
+        assert!(matches!(v.confirmar(), Err(DomainError::BusinessRule(_))));
     }
 
     #[test]

@@ -18,7 +18,12 @@ pub struct NotaFiscalResult {
     pub numero: i32,
     pub chave: Option<String>,
     pub status: String,
+    /// Total da nota (produtos − desconto).
     pub total_centavos: i64,
+    /// Desconto global destacado na NF — campo aditivo (0 em notas antigas).
+    #[sqlx(default)]
+    #[serde(default)]
+    pub desconto_centavos: i64,
     pub cancelamento_pendente: bool,
     // Breakdown de impostos (reforma tributária) — campos aditivos: notas
     // anteriores ao motor têm 0 na projeção.

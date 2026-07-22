@@ -21,6 +21,7 @@ impl<S: SefazClient, A: AliquotaProvider> EventHandler<VendaEvent> for FiscalVen
             venda_id,
             cliente_id,
             itens,
+            desconto_centavos,
             ..
         } = event
         {
@@ -37,7 +38,7 @@ impl<S: SefazClient, A: AliquotaProvider> EventHandler<VendaEvent> for FiscalVen
 
             if let Err(e) = self
                 .fiscal
-                .gerar_e_transmitir(venda_uuid, cliente_uuid, itens)
+                .gerar_e_transmitir(venda_uuid, cliente_uuid, itens, *desconto_centavos)
                 .await
             {
                 tracing::error!("Falha ao emitir NF para venda {venda_id}: {e:?}");

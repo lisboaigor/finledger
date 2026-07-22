@@ -49,13 +49,16 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         venda_id: Uuid,
         cliente_id: Option<Uuid>,
         itens_venda: &[ItemVendaSnapshot],
+        desconto_centavos: i64,
     ) -> Result<(), AppError> {
         let modelo = if cliente_id.is_some() {
             ModeloNF::NFe
         } else {
             ModeloNF::NFCe
         };
-        let (itens_nf, ibs_cbs_informativo) = self.enriquecer_itens(itens_venda, &modelo).await?;
+        let (itens_nf, ibs_cbs_informativo) = self
+            .enriquecer_itens(itens_venda, desconto_centavos, &modelo)
+            .await?;
 
         let numero = (Uuid::new_v4().as_u128() % 999_999_999u128 + 1) as u32;
 
@@ -66,6 +69,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             "001".into(),
             numero,
             itens_nf,
+            desconto_centavos,
             ibs_cbs_informativo,
         )?;
 
@@ -131,8 +135,10 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             nf.cancelar(proto)?;
             self.salvar(&mut nf).await?;
             if !devolucao_total && !itens_restantes.is_empty() {
-                // Reemissão com os itens que permaneceram na venda.
-                self.gerar_e_transmitir(venda_id, cliente_id, itens_restantes)
+                // Reemissão com os itens que permaneceram na venda. Sem
+                // desconto: assim como a CR não é ajustada automaticamente na
+                // devolução parcial, o abatimento é negociado no financeiro.
+                self.gerar_e_transmitir(venda_id, cliente_id, itens_restantes, 0)
                     .await?;
             }
         } else if nf.cancelamento_pendente {
@@ -181,11 +187,41 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         salvar_aggregate(&*self.repo, &self.bus, nf).await
     }
 
+    /// Rateia o desconto global da venda entre os itens, proporcional ao
+    /// subtotal de cada um (aritmética inteira; a sobra de arredondamento vai
+    /// para o último item, garantindo Σ ratear == desconto). Com desconto zero
+    /// devolve zeros — a base de cálculo fica exatamente o subtotal, como antes.
+    fn ratear_desconto(itens: &[ItemVendaSnapshot], desconto_centavos: i64) -> Vec<i64> {
+        let total_bruto: i64 = itens
+            .iter()
+            .map(|i| i.preco_unitario_centavos * i.quantidade as i64)
+            .sum();
+        if desconto_centavos <= 0 || total_bruto <= 0 {
+            return vec![0; itens.len()];
+        }
+        let mut rateado = Vec::with_capacity(itens.len());
+        let mut acumulado: i64 = 0;
+        for (idx, item) in itens.iter().enumerate() {
+            let quota = if idx + 1 == itens.len() {
+                desconto_centavos - acumulado
+            } else {
+                let subtotal = item.preco_unitario_centavos * item.quantidade as i64;
+                ((desconto_centavos as i128 * subtotal as i128) / total_bruto as i128) as i64
+            };
+            acumulado += quota;
+            rateado.push(quota);
+        }
+        rateado
+    }
+
     /// Enriquece cada item com os impostos calculados pelo motor e devolve, junto,
     /// o flag `ibs_cbs_informativo` do perfil vigente (congelado na NF para o BI).
+    /// A base de cálculo de cada item é o subtotal menos a quota rateada do
+    /// desconto global da venda.
     async fn enriquecer_itens(
         &self,
         itens: &[ItemVendaSnapshot],
+        desconto_centavos: i64,
         modelo: &ModeloNF,
     ) -> Result<(Vec<ItemNF>, bool), AppError> {
         // Perfil e fase resolvidos uma vez por NF; os valores calculados ficam
@@ -203,8 +239,9 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         };
         let ibs_cbs_informativo = ctx.perfil.ibs_cbs_informativo();
 
+        let rateio = Self::ratear_desconto(itens, desconto_centavos);
         let mut result = Vec::with_capacity(itens.len());
-        for item in itens {
+        for (item, desconto_item) in itens.iter().zip(rateio) {
             let produto_id = Uuid::parse_str(&item.produto_id).map_err(AppError::infra)?;
             let linha: Option<(String, Option<String>)> = sqlx::query_as(
                 "SELECT ncm, c_class_trib FROM proj_produtos WHERE produto_id = $1",
@@ -225,8 +262,11 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
                 .resolver(data_emissao, &ctx.perfil, &classe.classe, &ncm)
                 .await?;
 
-            let total = item.preco_unitario_centavos * item.quantidade as i64;
-            let imposto = MotorTributario::calcular_item(&ctx, &aliquotas, &classe, total);
+            // Base tributável = subtotal do item − quota do desconto rateado.
+            // Com desconto zero a base é o subtotal íntegro (números idênticos
+            // aos de antes do desconto existir).
+            let base = item.preco_unitario_centavos * item.quantidade as i64 - desconto_item;
+            let imposto = MotorTributario::calcular_item(&ctx, &aliquotas, &classe, base);
             result.push(ItemNF::novo(
                 produto_id,
                 item.sku.clone(),

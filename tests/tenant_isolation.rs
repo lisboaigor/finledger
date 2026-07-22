@@ -4,8 +4,8 @@
 /// Garantem que dados de um tenant não são visíveis nem modificáveis por outro.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, create_tenant, in_tenant, new_tenant_id, setup_db,
-    start_postgres, start_postgres_with_url, suspend_tenant,
+    TestResult, aguardar_projecoes, create_tenant, in_tenant, new_tenant_id, seed_produto,
+    setup_db, start_postgres, start_postgres_with_url, suspend_tenant,
 };
 
 use std::sync::Arc;
@@ -235,6 +235,8 @@ async fn venda_de_a_nao_gera_dados_em_b() -> TestResult {
     let id_a = new_tenant_id();
     let id_b = new_tenant_id();
     let produto_id = Uuid::new_v4();
+    // AdicionarItemVenda usa o preço de tabela do catálogo (5000).
+    seed_produto(&pool, id_a, produto_id, "X", 5000).await?;
 
     in_tenant(id_a, async move {
         estoque_a
@@ -266,6 +268,7 @@ async fn venda_de_a_nao_gera_dados_em_b() -> TestResult {
                 quantidade: 1,
                 preco_unitario_centavos: 5000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             })
             .await
             .expect("adicionar item falhou");

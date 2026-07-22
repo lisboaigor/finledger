@@ -120,10 +120,35 @@ impl VendasProjection {
                      SET total_centavos = (
                          SELECT COALESCE(SUM(CAST(quantidade AS BIGINT) * preco_unitario_centavos), 0)
                          FROM proj_vendas_itens WHERE venda_id = $1 AND tenant_id = $3
-                     ), atualizado_em = $2
+                     ) - desconto_centavos, atualizado_em = $2
                      WHERE venda_id = $1 AND tenant_id = $3",
                 )
                 .bind(vid)
+                .bind(*occurred_at)
+                .bind(tenant_id)
+                .execute(&self.pool)
+                .await?;
+            }
+            VendaEvent::DescontoVendaAplicado {
+                venda_id,
+                desconto_centavos,
+                occurred_at,
+            } => {
+                let Some(vid) = crate::projections::parse_uuid("venda_id", venda_id) else {
+                    return Ok(());
+                };
+                sqlx::query(
+                    "UPDATE proj_vendas
+                     SET desconto_centavos = $2,
+                         total_centavos = (
+                             SELECT COALESCE(SUM(CAST(quantidade AS BIGINT) * preco_unitario_centavos), 0)
+                             FROM proj_vendas_itens WHERE venda_id = $1 AND tenant_id = $4
+                         ) - $2,
+                         atualizado_em = $3
+                     WHERE venda_id = $1 AND tenant_id = $4",
+                )
+                .bind(vid)
+                .bind(*desconto_centavos)
                 .bind(*occurred_at)
                 .bind(tenant_id)
                 .execute(&self.pool)
@@ -152,6 +177,7 @@ impl VendasProjection {
             VendaEvent::VendaConfirmada {
                 venda_id,
                 total_centavos,
+                desconto_centavos,
                 forma_pagamento,
                 occurred_at,
                 ..
@@ -162,12 +188,13 @@ impl VendasProjection {
                 let forma_str = forma_pagamento.to_string();
                 sqlx::query(
                     "UPDATE proj_vendas
-                     SET status = 'confirmada', total_centavos = $2,
-                         forma_pagamento = $3, confirmada_em = $4, atualizado_em = $4
-                     WHERE venda_id = $1 AND tenant_id = $5",
+                     SET status = 'confirmada', total_centavos = $2, desconto_centavos = $3,
+                         forma_pagamento = $4, confirmada_em = $5, atualizado_em = $5
+                     WHERE venda_id = $1 AND tenant_id = $6",
                 )
                 .bind(vid)
                 .bind(*total_centavos)
+                .bind(*desconto_centavos)
                 .bind(forma_str)
                 .bind(*occurred_at)
                 .bind(tenant_id)
@@ -235,7 +262,7 @@ impl VendasProjection {
                      SET total_centavos = (
                          SELECT COALESCE(SUM(CAST(quantidade AS BIGINT) * preco_unitario_centavos), 0)
                          FROM proj_vendas_itens WHERE venda_id = $1 AND tenant_id = $3
-                     ), atualizado_em = $2
+                     ) - desconto_centavos, atualizado_em = $2
                      WHERE venda_id = $1 AND tenant_id = $3",
                 )
                 .bind(vid)

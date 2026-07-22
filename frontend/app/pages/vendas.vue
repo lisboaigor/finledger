@@ -289,6 +289,9 @@ onMounted(vm.carregar)
                             <div class="flex items-start justify-between gap-4">
                                 <StatusBadge :value="vm.detalhe.venda.status" :severity="vm.statusSeverity(vm.detalhe.venda.status)" />
                                 <div class="text-right">
+                                    <div v-if="vm.detalhe.venda.desconto_centavos > 0" class="text-sm text-muted-foreground">
+                                        Desconto: −{{ formatCentavos(vm.detalhe.venda.desconto_centavos) }}
+                                    </div>
                                     <div class="text-sm text-muted-foreground">Total</div>
                                     <div class="text-xl font-semibold">{{ formatCentavos(vm.detalhe.venda.total_centavos) }}</div>
                                 </div>

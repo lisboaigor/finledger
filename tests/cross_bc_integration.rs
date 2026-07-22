@@ -5,7 +5,10 @@
 /// VendaConfirmada → NF emitida (FiscalVendaEventHandler)
 /// MercadoriaRecebida → EstoqueEntrada (EstoqueComprasEventHandler)
 mod helpers;
-use helpers::{TestResult, aguardar_projecoes, in_tenant, new_tenant_id, setup_db, start_postgres};
+use helpers::{
+    TestResult, aguardar_projecoes, in_tenant, new_tenant_id, seed_produto, setup_db,
+    start_postgres,
+};
 
 use std::sync::Arc;
 
@@ -115,6 +118,8 @@ async fn venda_confirmada_gera_conta_receber_e_nf() -> TestResult {
     let tenant_id = new_tenant_id();
     let produto_id = Uuid::new_v4();
     let vendedor_id = Uuid::new_v4();
+    // AdicionarItemVenda usa o preço de tabela do catálogo (8000).
+    seed_produto(&pool, tenant_id, produto_id, "SKU-X", 8000).await?;
 
     let venda_id = in_tenant(tenant_id, async move {
         estoque
@@ -146,6 +151,7 @@ async fn venda_confirmada_gera_conta_receber_e_nf() -> TestResult {
                 quantidade: 2,
                 preco_unitario_centavos: 8000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             })
             .await
             .expect("adicionar item falhou");

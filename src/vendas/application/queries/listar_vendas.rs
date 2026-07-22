@@ -11,7 +11,12 @@ pub struct VendaResult {
     pub venda_id: Uuid,
     pub vendedor_id: Uuid,
     pub cliente_id: Option<Uuid>,
+    /// Total LÍQUIDO (bruto dos itens − desconto).
     pub total_centavos: i64,
+    /// Desconto global da venda (0 quando não há) — campo aditivo.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub desconto_centavos: i64,
     pub status: String,
     pub forma_pagamento: Option<String>,
 }

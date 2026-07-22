@@ -3,7 +3,8 @@
 /// CRUD do módulo Vendas: fluxo completo de comandos, queries e repositório.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, in_tenant, montar_app, new_tenant_id, setup_db, start_postgres,
+    TestResult, aguardar_projecoes, in_tenant, montar_app, new_tenant_id, seed_produto, setup_db,
+    start_postgres,
 };
 
 use pharos_app::{DispatchError, dispatch, query_dispatch};
@@ -23,9 +24,12 @@ async fn ciclo_completo_da_venda_com_queries() -> TestResult {
     let (_c, pool) = start_postgres().await?;
     setup_db(&pool).await?;
     let app = montar_app(&pool);
+    let tenant_id = new_tenant_id();
+    let produto_id = Uuid::new_v4();
+    // Preço de tabela = 8000 — AdicionarItemVenda usa SEMPRE o catálogo.
+    seed_produto(&pool, tenant_id, produto_id, "SKU-1", 8000).await?;
 
-    in_tenant(new_tenant_id(), async move {
-        let produto_id = Uuid::new_v4();
+    in_tenant(tenant_id, async move {
         dispatch(
             &*app.estoque,
             RegistrarEntradaEstoque {
@@ -60,6 +64,7 @@ async fn ciclo_completo_da_venda_com_queries() -> TestResult {
                 quantidade: 2,
                 preco_unitario_centavos: 8000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await
@@ -74,6 +79,7 @@ async fn ciclo_completo_da_venda_com_queries() -> TestResult {
                 quantidade: 1,
                 preco_unitario_centavos: 8000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await
@@ -212,8 +218,12 @@ async fn adicionar_item_sem_estoque_e_bloqueado() -> TestResult {
     setup_db(&pool).await?;
     let app = montar_app(&pool);
     let produto_id = Uuid::new_v4();
+    let tenant_id = new_tenant_id();
+    // Produto existe no catálogo (senão o erro seria "fora do catálogo", não
+    // falta de estoque).
+    seed_produto(&pool, tenant_id, produto_id, "SKU-X", 1000).await?;
 
-    in_tenant(new_tenant_id(), async move {
+    in_tenant(tenant_id, async move {
         let venda_id = dispatch(
             &*app.vendas,
             IniciarVenda {
@@ -234,6 +244,7 @@ async fn adicionar_item_sem_estoque_e_bloqueado() -> TestResult {
                 quantidade: 5,
                 preco_unitario_centavos: 1000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await;
@@ -254,8 +265,10 @@ async fn adicionar_item_sob_encomenda_ignora_falta_de_estoque() -> TestResult {
     setup_db(&pool).await?;
     let app = montar_app(&pool);
     let produto_id = Uuid::new_v4();
+    let tenant_id = new_tenant_id();
+    seed_produto(&pool, tenant_id, produto_id, "SKU-X", 1000).await?;
 
-    in_tenant(new_tenant_id(), async move {
+    in_tenant(tenant_id, async move {
         let venda_id = dispatch(
             &*app.vendas,
             IniciarVenda {
@@ -276,6 +289,7 @@ async fn adicionar_item_sob_encomenda_ignora_falta_de_estoque() -> TestResult {
                 quantidade: 5,
                 preco_unitario_centavos: 1000,
                 vender_sem_estoque: true,
+                preservar_preco_informado: false,
             },
         )
         .await
@@ -352,10 +366,189 @@ async fn adicionar_item_de_servico_ignora_saldo_de_estoque() -> TestResult {
                 quantidade: 1,
                 preco_unitario_centavos: 15_000,
                 vender_sem_estoque: false,
+                preservar_preco_informado: false,
             },
         )
         .await
         .expect("serviço não deve ser bloqueado por falta de estoque");
+    })
+    .await;
+    Ok(())
+}
+/// Issue #2: o preço unitário do payload é ignorado — o item entra SEMPRE com
+/// o preço de tabela do catálogo (proj_produtos.preco_venda). Um PDV adulterado
+/// não consegue vender abaixo do preço.
+#[tokio::test]
+async fn preco_adulterado_no_payload_e_substituido_pelo_preco_de_catalogo() -> TestResult {
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let app = montar_app(&pool);
+    let tenant_id = new_tenant_id();
+    let produto_id = Uuid::new_v4();
+    seed_produto(&pool, tenant_id, produto_id, "SKU-CAT", 8000).await?;
+
+    in_tenant(tenant_id, async move {
+        let venda_id = dispatch(
+            &*app.vendas,
+            IniciarVenda {
+                vendedor_id: Uuid::new_v4(),
+                cliente_id: None,
+            },
+        )
+        .await
+        .expect("iniciar");
+
+        dispatch(
+            &*app.vendas,
+            AdicionarItemVenda {
+                venda_id: venda_id.as_uuid(),
+                produto_id,
+                sku: "SKU-CAT".into(),
+                descricao: "Pastilha".into(),
+                quantidade: 2,
+                preco_unitario_centavos: 1, // adulterado — deve ser ignorado
+                vender_sem_estoque: true,
+                preservar_preco_informado: false,
+            },
+        )
+        .await
+        .expect("adicionar item");
+        aguardar_projecoes().await;
+
+        let detalhes = query_dispatch(
+            &*app.vendas,
+            BuscarVenda {
+                venda_id: venda_id.as_uuid(),
+            },
+        )
+        .await
+        .expect("buscar")
+        .expect("venda existe");
+        assert_eq!(
+            detalhes.itens[0].preco_unitario_centavos, 8000,
+            "preço gravado é o de catálogo, não o do payload"
+        );
+        assert_eq!(detalhes.venda.total_centavos, 16_000);
+    })
+    .await;
+    Ok(())
+}
+
+/// Produto fora do catálogo → erro de negócio claro (não INSERT às cegas).
+#[tokio::test]
+async fn adicionar_item_de_produto_fora_do_catalogo_retorna_erro() -> TestResult {
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let app = montar_app(&pool);
+
+    in_tenant(new_tenant_id(), async move {
+        let venda_id = dispatch(
+            &*app.vendas,
+            IniciarVenda {
+                vendedor_id: Uuid::new_v4(),
+                cliente_id: None,
+            },
+        )
+        .await
+        .expect("iniciar");
+
+        let r = dispatch(
+            &*app.vendas,
+            AdicionarItemVenda {
+                venda_id: venda_id.as_uuid(),
+                produto_id: Uuid::new_v4(), // nunca cadastrado
+                sku: "SKU-FANTASMA".into(),
+                descricao: "Não existe".into(),
+                quantidade: 1,
+                preco_unitario_centavos: 1000,
+                vender_sem_estoque: true,
+                preservar_preco_informado: false,
+            },
+        )
+        .await;
+        assert!(matches!(
+            r,
+            Err(DispatchError::Handler(AppError::Domain(_)))
+        ));
+    })
+    .await;
+    Ok(())
+}
+
+/// Desconto maior que o total bruto dos itens → erro de validação do domínio.
+#[tokio::test]
+async fn desconto_maior_que_o_total_da_venda_retorna_erro() -> TestResult {
+    use finledger::vendas::application::commands::AplicarDescontoVenda;
+
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let app = montar_app(&pool);
+    let tenant_id = new_tenant_id();
+    let produto_id = Uuid::new_v4();
+    seed_produto(&pool, tenant_id, produto_id, "SKU-D", 8000).await?;
+
+    in_tenant(tenant_id, async move {
+        let venda_id = dispatch(
+            &*app.vendas,
+            IniciarVenda {
+                vendedor_id: Uuid::new_v4(),
+                cliente_id: None,
+            },
+        )
+        .await
+        .expect("iniciar");
+        dispatch(
+            &*app.vendas,
+            AdicionarItemVenda {
+                venda_id: venda_id.as_uuid(),
+                produto_id,
+                sku: "SKU-D".into(),
+                descricao: "Item".into(),
+                quantidade: 1,
+                preco_unitario_centavos: 8000,
+                vender_sem_estoque: true,
+                preservar_preco_informado: false,
+            },
+        )
+        .await
+        .expect("item");
+
+        let r = dispatch(
+            &*app.vendas,
+            AplicarDescontoVenda {
+                venda_id: venda_id.as_uuid(),
+                desconto_centavos: 8001,
+            },
+        )
+        .await;
+        assert!(matches!(
+            r,
+            Err(DispatchError::Handler(AppError::Domain(_)))
+        ));
+
+        // Desconto válido funciona e reduz o total projetado.
+        dispatch(
+            &*app.vendas,
+            AplicarDescontoVenda {
+                venda_id: venda_id.as_uuid(),
+                desconto_centavos: 500,
+            },
+        )
+        .await
+        .expect("desconto válido");
+        aguardar_projecoes().await;
+
+        let detalhes = query_dispatch(
+            &*app.vendas,
+            BuscarVenda {
+                venda_id: venda_id.as_uuid(),
+            },
+        )
+        .await
+        .expect("buscar")
+        .expect("venda existe");
+        assert_eq!(detalhes.venda.desconto_centavos, 500);
+        assert_eq!(detalhes.venda.total_centavos, 7500);
     })
     .await;
     Ok(())

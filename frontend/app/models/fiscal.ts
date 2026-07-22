@@ -9,7 +9,10 @@ export interface NotaFiscal {
     numero: number
     chave: string | null
     status: string
+    /** Total da nota (produtos − desconto). */
     total_centavos: number
+    /** Desconto global da venda destacado na NF (0 em notas antigas). */
+    desconto_centavos: number
     /** Devolução registrada antes da integração SEFAZ — cancelamento aguardando. */
     cancelamento_pendente: boolean
     // Breakdown de impostos (reforma tributária) — notas antigas têm 0.

@@ -50,7 +50,7 @@ async fn fiscal_gerar_e_transmitir_autoriza_nf() -> TestResult {
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("gerar e transmitir falhou");
     })
@@ -94,7 +94,7 @@ async fn fiscal_cancelar_nf_autorizada() -> TestResult {
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("gerar e transmitir falhou");
 
@@ -161,7 +161,7 @@ async fn fiscal_projecao_registra_nf_autorizada() -> TestResult {
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("gerar e transmitir falhou");
     })
@@ -298,7 +298,7 @@ async fn rejeicao_da_sefaz_deixa_nf_rejeitada() -> TestResult {
     let item = item_teste(Uuid::new_v4(), 5000);
     in_tenant(new_tenant_id(), async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("rejeição da SEFAZ não é erro do fluxo — vira status da NF");
     })
@@ -337,7 +337,7 @@ async fn sefaz_indisponivel_deixa_nf_transmitida_para_retransmissao() -> TestRes
     let item = item_teste(Uuid::new_v4(), 5000);
     in_tenant(new_tenant_id(), async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("indisponibilidade não derruba o fluxo");
     })
@@ -383,7 +383,7 @@ async fn classe_tributaria_corrompida_na_projecao_falha_emissao() -> TestResult 
     let venda_id = Uuid::new_v4();
     let item = item_teste(produto_id, 5000);
     let resultado = in_tenant(tenant_id, async move {
-        fiscal.gerar_e_transmitir(venda_id, None, &[item]).await
+        fiscal.gerar_e_transmitir(venda_id, None, &[item], 0).await
     })
     .await;
     assert!(resultado.is_err(), "classe malformada deve falhar a emissão");
@@ -418,7 +418,7 @@ async fn nf_sem_perfil_fiscal_mantem_valores_legados() -> TestResult {
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("gerar e transmitir falhou");
     })
@@ -469,7 +469,7 @@ async fn nf_projeta_impostos_por_item_com_flag_informativo() -> TestResult {
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item_teste(produto_id, 100_000)])
+            .gerar_e_transmitir(venda_id, None, &[item_teste(produto_id, 100_000)], 0)
             .await
             .expect("gerar e transmitir falhou");
     })
@@ -546,7 +546,7 @@ async fn nf_com_perfil_e_classe_de_reducao_aplica_reducao_no_ibs_cbs() -> TestRe
 
     in_tenant(tenant_id, async move {
         fiscal
-            .gerar_e_transmitir(venda_id, None, &[item])
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
             .await
             .expect("gerar e transmitir falhou");
     })
@@ -572,5 +572,77 @@ async fn nf_com_perfil_e_classe_de_reducao_aplica_reducao_no_ibs_cbs() -> TestRe
     // A redução precisa ter efeito real (reduzido < integral) — senão o teste
     // passaria mesmo com a classe ignorada.
     assert!(cbs < integral.cbs, "redução deve diminuir a CBS");
+    Ok(())
+}
+/// Desconto global da venda destacado na NF: o total sai líquido (produtos −
+/// desconto) e a base de cálculo de cada item é o subtotal menos a quota do
+/// desconto rateada proporcionalmente (sobra de arredondamento no último item).
+/// O desconto 999 sobre 60.000/40.000 não divide exato de propósito: quota do
+/// 1º item = ⌊999×60000/100000⌋ = 599, o último absorve os 400 restantes —
+/// Σ bases = produtos − desconto, sem centavo perdido.
+#[tokio::test]
+async fn nf_com_desconto_rateia_a_base_de_calculo_por_item() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = montar_fiscal(&pool, bus);
+
+    let tenant_id = new_tenant_id(); // sem perfil → legado Simples
+    let venda_id = Uuid::new_v4();
+    let produto_a = Uuid::new_v4();
+    let produto_b = Uuid::new_v4();
+    let itens = vec![item_teste(produto_a, 60_000), item_teste(produto_b, 40_000)];
+    let desconto = 999i64;
+
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &itens, desconto)
+            .await
+            .expect("gerar e transmitir falhou");
+    })
+    .await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Totais da NF: produtos brutos, desconto destacado, total líquido.
+    let (total, desc, icms_total): (i64, i64, i64) = sqlx::query_as(
+        "SELECT total_centavos, desconto_centavos, icms_centavos
+         FROM proj_notas_fiscais WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(desc, 999, "desconto destacado na NF");
+    assert_eq!(total, 100_000 - 999, "total da NF é o líquido");
+
+    // Bases rateadas: 60.000 − 599 = 59.401 e 40.000 − 400 = 39.600.
+    let esperado_a = impostos_esperados_hoje(59_401, 0);
+    let esperado_b = impostos_esperados_hoje(39_600, 0);
+    assert_eq!(
+        icms_total,
+        esperado_a.icms + esperado_b.icms,
+        "ICMS total calculado sobre as bases líquidas rateadas"
+    );
+
+    let rows: Vec<(uuid::Uuid, i64, i64)> = sqlx::query_as(
+        "SELECT produto_id, icms_centavos, cbs_centavos
+         FROM proj_nf_itens WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(rows.len(), 2);
+    for (produto_id, icms, cbs) in rows {
+        let esperado = if produto_id == produto_a {
+            &esperado_a
+        } else {
+            &esperado_b
+        };
+        assert_eq!(icms, esperado.icms, "ICMS por item sobre a base líquida");
+        assert_eq!(cbs, esperado.cbs, "CBS por item sobre a base líquida");
+    }
     Ok(())
 }
