@@ -14,6 +14,9 @@ pub struct BiResumoResult {
     pub vencidas_centavos: i64,
     pub caixa_30d_centavos: i64,
     pub margem_percent: Option<f64>,
+    /// Margem líquida de impostos da NF (reforma LC 214/2025) — sobra após o
+    /// imposto que é custo do vendedor; `None` sem vendas/NF no mês.
+    pub margem_liquida_percent: Option<f64>,
     pub conversao_percent: Option<f64>,
 }
 

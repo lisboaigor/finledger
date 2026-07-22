@@ -5,6 +5,7 @@ use pharos_core::Entity;
 use uuid::Uuid;
 
 use super::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
+use super::queries::AliquotaEfetivaProduto;
 use crate::error::AppError;
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
 use crate::fiscal::domain::tributacao::{
@@ -54,12 +55,19 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         } else {
             ModeloNF::NFCe
         };
-        let itens_nf = self.enriquecer_itens(itens_venda, &modelo).await?;
+        let (itens_nf, ibs_cbs_informativo) = self.enriquecer_itens(itens_venda, &modelo).await?;
 
         let numero = (Uuid::new_v4().as_u128() % 999_999_999u128 + 1) as u32;
 
-        let mut nf =
-            NotaFiscal::gerar(venda_id, cliente_id, modelo, "001".into(), numero, itens_nf)?;
+        let mut nf = NotaFiscal::gerar(
+            venda_id,
+            cliente_id,
+            modelo,
+            "001".into(),
+            numero,
+            itens_nf,
+            ibs_cbs_informativo,
+        )?;
 
         self.salvar(&mut nf).await?;
 
@@ -173,11 +181,13 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         salvar_aggregate(&*self.repo, &self.bus, nf).await
     }
 
+    /// Enriquece cada item com os impostos calculados pelo motor e devolve, junto,
+    /// o flag `ibs_cbs_informativo` do perfil vigente (congelado na NF para o BI).
     async fn enriquecer_itens(
         &self,
         itens: &[ItemVendaSnapshot],
         modelo: &ModeloNF,
-    ) -> Result<Vec<ItemNF>, AppError> {
+    ) -> Result<(Vec<ItemNF>, bool), AppError> {
         // Perfil e fase resolvidos uma vez por NF; os valores calculados ficam
         // congelados no evento — replay/retransmissão nunca recalcula.
         let perfil = self
@@ -191,6 +201,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             fase: FaseTransicao::de_data(data_emissao),
             perfil,
         };
+        let ibs_cbs_informativo = ctx.perfil.ibs_cbs_informativo();
 
         let mut result = Vec::with_capacity(itens.len());
         for item in itens {
@@ -226,6 +237,71 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
                 item.preco_unitario_centavos,
                 imposto,
             )?);
+        }
+        Ok((result, ibs_cbs_informativo))
+    }
+
+    /// Alíquota efetiva (bps) que é CUSTO do vendedor para cada produto ativo,
+    /// na fase vigente hoje e no perfil do tenant. Reusa o mesmo motor da
+    /// emissão — a precificação assistida consome isto no lugar do imposto
+    /// manual único, refletindo a reforma automaticamente conforme as fases
+    /// avançam. Resolução por (classe, ncm) é cacheada para não repetir I/O.
+    pub async fn listar_aliquota_efetiva_produtos(
+        &self,
+    ) -> Result<Vec<AliquotaEfetivaProduto>, AppError> {
+        // Base nominal alta para a alíquota efetiva ter boa precisão em bps
+        // (R$ 10.000,00). bps = custo_vendedor × 10_000 / base.
+        const BASE_CENTAVOS: i64 = 1_000_000;
+
+        let perfil = self
+            .tenants
+            .obter_perfil_fiscal()
+            .await?
+            .para_dominio()?
+            .unwrap_or_else(PerfilFiscal::padrao_legado);
+        let data = chrono::Utc::now().date_naive();
+        let ctx = ContextoFiscal {
+            fase: FaseTransicao::de_data(data),
+            perfil,
+        };
+        let informativo = ctx.perfil.ibs_cbs_informativo();
+
+        let produtos: Vec<(Uuid, String, Option<String>)> =
+            sqlx::query_as("SELECT produto_id, ncm, c_class_trib FROM proj_produtos WHERE ativo")
+                .fetch_all(self.repo.pool())
+                .await
+                .map_err(AppError::infra)?;
+
+        // Cache por (classe, ncm): produtos com mesma classe/NCM têm a mesma
+        // alíquota efetiva — evita reresolver alíquotas por produto.
+        let mut cache: std::collections::HashMap<(String, String), i32> =
+            std::collections::HashMap::new();
+        let mut result = Vec::with_capacity(produtos.len());
+        for (produto_id, ncm, classe_produto) in produtos {
+            let classe_key = classe_produto.clone().unwrap_or_default();
+            let chave = (classe_key, ncm.clone());
+            let bps = if let Some(bps) = cache.get(&chave) {
+                *bps
+            } else {
+                let classe_vo = classe_produto
+                    .map(ClasseTributaria::try_from)
+                    .transpose()
+                    .map_err(AppError::Domain)?;
+                let classe = self.aliquotas.classe_info(classe_vo.as_ref()).await?;
+                let aliquotas = self
+                    .aliquotas
+                    .resolver(data, &ctx.perfil, &classe.classe, &ncm)
+                    .await?;
+                let imposto = MotorTributario::calcular_item(&ctx, &aliquotas, &classe, BASE_CENTAVOS);
+                let custo = imposto.custo_vendedor_centavos(informativo);
+                let bps = (custo * 10_000 / BASE_CENTAVOS) as i32;
+                cache.insert(chave, bps);
+                bps
+            };
+            result.push(AliquotaEfetivaProduto {
+                produto_id,
+                imposto_efetivo_bps: bps,
+            });
         }
         Ok(result)
     }

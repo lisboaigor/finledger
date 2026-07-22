@@ -142,6 +142,14 @@ impl PerfilFiscal {
             ibs_cbs_regime_regular: false,
         }
     }
+
+    /// IBS/CBS destacados são meramente informativos para este perfil? Verdadeiro
+    /// no Simples Nacional que NÃO optou pelo regime regular — nesse caso o
+    /// IBS/CBS é recolhido por dentro do DAS e não é custo por fora do vendedor
+    /// (LC 214/2025, art. 41). Demais regimes recolhem por fora → não informativo.
+    pub fn ibs_cbs_informativo(&self) -> bool {
+        self.regime == RegimeTributario::SimplesNacional && !self.ibs_cbs_regime_regular
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +179,26 @@ mod tests {
         assert!(Crt::try_from(5).is_err());
         assert!(Crt::try_from(1).is_ok());
         assert!(Crt::try_from(4).is_ok());
+    }
+
+    #[test]
+    fn simples_sem_regime_regular_e_informativo() {
+        let p = PerfilFiscal::padrao_legado(); // Simples Nacional, regime_regular = false
+        assert!(p.ibs_cbs_informativo());
+    }
+
+    #[test]
+    fn simples_com_regime_regular_nao_e_informativo() {
+        let mut p = PerfilFiscal::padrao_legado();
+        p.ibs_cbs_regime_regular = true;
+        assert!(!p.ibs_cbs_informativo());
+    }
+
+    #[test]
+    fn lucro_real_nunca_e_informativo() {
+        let mut p = PerfilFiscal::padrao_legado();
+        p.regime = RegimeTributario::LucroReal;
+        assert!(!p.ibs_cbs_informativo());
     }
 
     #[test]

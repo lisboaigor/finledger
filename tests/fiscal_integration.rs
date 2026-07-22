@@ -450,6 +450,55 @@ async fn nf_sem_perfil_fiscal_mantem_valores_legados() -> TestResult {
     Ok(())
 }
 
+/// A projeção por item (proj_nf_itens) materializa os 8 tributos por produto e
+/// congela o flag `ibs_cbs_informativo` do perfil — insumo da margem líquida do
+/// BI. Tenant sem perfil = Simples legado ⇒ informativo verdadeiro.
+#[tokio::test]
+async fn nf_projeta_impostos_por_item_com_flag_informativo() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = montar_fiscal(&pool, bus);
+
+    let tenant_id = new_tenant_id(); // sem perfil → Simples legado (informativo)
+    let venda_id = Uuid::new_v4();
+    let produto_id = Uuid::new_v4();
+
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item_teste(produto_id, 100_000)])
+            .await
+            .expect("gerar e transmitir falhou");
+    })
+    .await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let row: Option<(Uuid, i32, i64, i64, i64, i64, bool)> = sqlx::query_as(
+        "SELECT produto_id, quantidade, total_centavos, icms_centavos,
+                cbs_centavos, ibs_uf_centavos, ibs_cbs_informativo
+         FROM proj_nf_itens WHERE venda_id = $1",
+    )
+    .bind(venda_id)
+    .fetch_optional(&pool)
+    .await?;
+    let (proj_produto, qtd, total, icms, cbs, ibs_uf, informativo) =
+        row.expect("item da NF projetado");
+
+    let e = impostos_esperados_hoje(100_000, 0);
+    assert_eq!(proj_produto, produto_id);
+    assert_eq!(qtd, 1);
+    assert_eq!(total, 100_000);
+    assert_eq!(icms, e.icms, "ICMS por item da fase vigente");
+    assert_eq!(cbs, e.cbs, "CBS por item da fase vigente");
+    assert_eq!(ibs_uf, e.ibs_uf);
+    assert!(informativo, "Simples sem regime regular → IBS/CBS informativo");
+    Ok(())
+}
+
 /// Tenant COM perfil fiscal e produto classificado com redução de 60%:
 /// CBS/IBS saem reduzidos; legados intactos (a classe da reforma não afeta ICMS).
 #[tokio::test]

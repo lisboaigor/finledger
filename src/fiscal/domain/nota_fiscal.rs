@@ -43,6 +43,7 @@ impl NotaFiscal {
         serie: String,
         numero: u32,
         itens: Vec<ItemNF>,
+        ibs_cbs_informativo: bool,
     ) -> DomainResult<Self> {
         if itens.is_empty() {
             return Err(DomainError::Validation(
@@ -62,6 +63,7 @@ impl NotaFiscal {
             numero,
             itens: itens.clone(),
             totais: totais.clone(),
+            ibs_cbs_informativo,
             occurred_at: now,
         });
         Ok(Self {
@@ -198,6 +200,7 @@ mod tests {
             "001".into(),
             1,
             vec![item_nf()],
+            false,
         )
         .expect("deve gerar NF válida")
     }
@@ -211,6 +214,7 @@ mod tests {
             "001".into(),
             1,
             vec![],
+            false,
         );
         assert!(matches!(err, Err(DomainError::Validation(_))));
     }

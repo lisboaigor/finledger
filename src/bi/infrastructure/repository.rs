@@ -69,6 +69,10 @@ impl PostgresBiRepository {
                    FROM bi.fato_vendas_item
                   WHERE status = 'confirmada' AND data_venda >= date_trunc('month', NOW())::date)
                     AS margem_percent,
+                (SELECT SUM(margem_liquida_centavos)::float8 / NULLIF(SUM(receita_centavos), 0)::float8 * 100
+                   FROM bi.fato_vendas_item
+                  WHERE status = 'confirmada' AND data_venda >= date_trunc('month', NOW())::date)
+                    AS margem_liquida_percent,
                 (SELECT (COUNT(*) FILTER (WHERE status = 'convertido'))::float8
                         / NULLIF(COUNT(*) FILTER (WHERE status IN ('aceito', 'recusado', 'expirado', 'convertido')), 0)::float8
                         * 100

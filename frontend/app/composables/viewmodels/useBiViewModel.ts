@@ -89,6 +89,23 @@ export function useBiViewModel() {
                 icon: 'pi pi-percentage',
             },
         ]
+
+        // Margem já descontados os impostos que são custo do vendedor (reforma
+        // LC 214/2025). Aparece quando há vendas com nota no mês; a diferença
+        // para a margem de balcão é o peso dos tributos.
+        const liquida = r.margem_liquida_percent
+        if (liquida !== null) {
+            itens.push({
+                label: 'Margem depois dos impostos',
+                value: `R$ ${liquida.toFixed(0)} a cada R$ 100 vendidos`,
+                detalhe:
+                    margem !== null && margem > liquida
+                        ? `os impostos consomem cerca de R$ ${(margem - liquida).toFixed(0)} a cada R$ 100`
+                        : 'sobra após os impostos que são custo da loja',
+                tom: liquida >= 20 ? 'bom' : liquida >= 12 ? 'atencao' : 'critico',
+                icon: 'pi pi-receipt',
+            })
+        }
         return itens
     })
 

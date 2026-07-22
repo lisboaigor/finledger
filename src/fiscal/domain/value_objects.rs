@@ -74,6 +74,22 @@ impl ImpostoItem {
             ..Self::default()
         }
     }
+
+    /// Soma dos tributos que são custo efetivo do vendedor. ICMS/ISS/PIS/COFINS
+    /// e o Imposto Seletivo sempre entram; IBS/CBS destacados só contam quando
+    /// NÃO são informativos — no Simples Nacional sem opção pelo regime regular
+    /// eles são recolhidos por dentro do DAS (LC 214/2025, art. 41) e não
+    /// incrementam o custo por fora. Fonte única reusada por precificação, BI e
+    /// projeção (evita duplicar a regra em TS/SQL).
+    pub fn custo_vendedor_centavos(&self, ibs_cbs_informativo: bool) -> i64 {
+        let legado_e_seletivo =
+            self.icms_centavos + self.iss_centavos + self.pis_centavos + self.cofins_centavos + self.is_centavos;
+        if ibs_cbs_informativo {
+            legado_e_seletivo
+        } else {
+            legado_e_seletivo + self.cbs_centavos + self.ibs_uf_centavos + self.ibs_mun_centavos
+        }
+    }
 }
 
 // `ncm`/`cfop`/`quantidade`/`valor_unitario_centavos` são privados: só se
@@ -262,5 +278,33 @@ mod tests {
         assert_eq!(totais.produtos_centavos, 0);
         assert_eq!(totais.total_centavos, 0);
         assert_eq!(totais.cbs_centavos, 0);
+    }
+
+    fn imposto_pleno() -> ImpostoItem {
+        ImpostoItem {
+            icms_centavos: 1_000,
+            iss_centavos: 100,
+            pis_centavos: 65,
+            cofins_centavos: 300,
+            cbs_centavos: 880,
+            ibs_uf_centavos: 700,
+            ibs_mun_centavos: 175,
+            is_centavos: 250,
+            ..ImpostoItem::default()
+        }
+    }
+
+    #[test]
+    fn custo_vendedor_informativo_exclui_ibs_cbs() {
+        // Simples informativo: IBS/CBS ficam de fora (recolhidos via DAS).
+        let esperado = 1_000 + 100 + 65 + 300 + 250;
+        assert_eq!(imposto_pleno().custo_vendedor_centavos(true), esperado);
+    }
+
+    #[test]
+    fn custo_vendedor_nao_informativo_inclui_ibs_cbs() {
+        // Regime regular / não-Simples: IBS/CBS são custo por fora.
+        let esperado = 1_000 + 100 + 65 + 300 + 250 + 880 + 700 + 175;
+        assert_eq!(imposto_pleno().custo_vendedor_centavos(false), esperado);
     }
 }

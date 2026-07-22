@@ -533,6 +533,11 @@ fn fiscal_routes() -> ApiRouter {
             "/fiscal/classes-tributarias",
             get(routes::fiscal::listar_classes_tributarias),
         )
+        // Alíquota efetiva de imposto por produto — insumo da precificação
+        .route(
+            "/fiscal/aliquotas-efetivas",
+            get(routes::fiscal::aliquotas_efetivas),
+        )
         .route("/fiscal/notas/{id}", get(routes::fiscal::buscar))
         .route(
             "/fiscal/notas/{id}/cancelar",

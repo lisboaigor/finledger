@@ -8,6 +8,8 @@ export interface BiResumo {
     vencidas_centavos: number
     caixa_30d_centavos: number
     margem_percent: number | null
+    /** Margem líquida de impostos da NF (reforma LC 214/2025); null sem vendas. */
+    margem_liquida_percent: number | null
     conversao_percent: number | null
 }
 

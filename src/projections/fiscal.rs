@@ -4,6 +4,7 @@ use pharos_app::EventHandler;
 use pharos_postgres::Pool;
 
 use crate::fiscal::domain::events::NotaFiscalEvent;
+use crate::fiscal::domain::value_objects::ImpostoItem;
 use crate::shared::tenant::current_tenant_id;
 
 pub struct FiscalProjection {
@@ -28,9 +29,10 @@ impl FiscalProjection {
                 modelo,
                 serie,
                 numero,
+                itens,
                 totais,
+                ibs_cbs_informativo,
                 occurred_at,
-                ..
             } => {
                 let nf_uuid =
                     uuid::Uuid::parse_str(nf_id).map_err(|e| sqlx::Error::Decode(e.into()))?;
@@ -69,6 +71,58 @@ impl FiscalProjection {
                 .bind(totais.is_centavos)
                 .execute(&self.pool)
                 .await?;
+
+                // Breakdown por produto para a margem líquida do BI. Impostos
+                // congelados no evento; `ibs_cbs_informativo` idem — o ETL
+                // decide se soma IBS/CBS ao custo do vendedor. A NF pode ter
+                // duas linhas do mesmo produto (a venda não funde linhas), então
+                // agregamos por produto: a PK (tenant, nf, produto) exige grão
+                // por produto e um DO NOTHING descartaria a 2ª linha.
+                let mut por_produto: std::collections::HashMap<uuid::Uuid, (i32, i64, ImpostoItem)> =
+                    std::collections::HashMap::new();
+                for item in itens {
+                    let (qtd, total, imp) = por_produto
+                        .entry(item.produto_id)
+                        .or_insert_with(|| (0, 0, ImpostoItem::default()));
+                    *qtd += item.quantidade() as i32;
+                    *total += item.total_centavos();
+                    imp.icms_centavos += item.imposto.icms_centavos;
+                    imp.iss_centavos += item.imposto.iss_centavos;
+                    imp.pis_centavos += item.imposto.pis_centavos;
+                    imp.cofins_centavos += item.imposto.cofins_centavos;
+                    imp.cbs_centavos += item.imposto.cbs_centavos;
+                    imp.ibs_uf_centavos += item.imposto.ibs_uf_centavos;
+                    imp.ibs_mun_centavos += item.imposto.ibs_mun_centavos;
+                    imp.is_centavos += item.imposto.is_centavos;
+                }
+                for (produto_id, (quantidade, total, imp)) in por_produto {
+                    sqlx::query(
+                        "INSERT INTO proj_nf_itens
+                         (tenant_id, nf_id, venda_id, produto_id, quantidade, total_centavos,
+                          icms_centavos, iss_centavos, pis_centavos, cofins_centavos,
+                          cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
+                          ibs_cbs_informativo)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                         ON CONFLICT (tenant_id, nf_id, produto_id) DO NOTHING",
+                    )
+                    .bind(tenant_id)
+                    .bind(nf_uuid)
+                    .bind(venda_uuid)
+                    .bind(produto_id)
+                    .bind(quantidade)
+                    .bind(total)
+                    .bind(imp.icms_centavos)
+                    .bind(imp.iss_centavos)
+                    .bind(imp.pis_centavos)
+                    .bind(imp.cofins_centavos)
+                    .bind(imp.cbs_centavos)
+                    .bind(imp.ibs_uf_centavos)
+                    .bind(imp.ibs_mun_centavos)
+                    .bind(imp.is_centavos)
+                    .bind(*ibs_cbs_informativo)
+                    .execute(&self.pool)
+                    .await?;
+                }
             }
 
             NotaFiscalEvent::NotaFiscalTransmitida { nf_id, occurred_at } => {

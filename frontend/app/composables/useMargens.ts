@@ -9,6 +9,7 @@ import type {
     ProdutoPrecificacao,
 } from '~/models/catalogo'
 import {
+    listarAliquotasEfetivas,
     listarGiroProdutos,
     listarMaquinasCartao,
     listarMargensCategoria,
@@ -104,6 +105,9 @@ export function useMargens() {
     const custosFixosItens = useState<CustoFixo[]>('margens-custos-fixos', () => [])
     const giroProdutos = useState<GiroProduto[]>('margens-giro', () => [])
     const mixPagamento = useState<MixPagamento | null>('margens-mix-pagamento', () => null)
+    // produto_id → alíquota efetiva de imposto (bps) do motor da reforma; vazio
+    // quando o backend fiscal não responde (cai no imposto manual do tenant).
+    const aliquotasEfetivas = useState<Record<string, number>>('margens-aliquotas-efetivas', () => ({}))
     const carregado = useState('margens-carregado', () => false)
 
     async function garantirCarregado() {
@@ -117,6 +121,7 @@ export function useMargens() {
                 { custos },
                 { produtos: giro },
                 { mix },
+                { aliquotas },
             ] = await Promise.all([
                 obterConfiguracoes(apiFetch),
                 listarMargensCategoria(apiFetch),
@@ -125,6 +130,9 @@ export function useMargens() {
                 listarCustosFixos(apiFetch),
                 listarGiroProdutos(apiFetch),
                 obterMixPagamento(apiFetch),
+                // Degrada para o imposto manual do tenant se o fiscal falhar —
+                // não derruba o painel de precificação inteiro.
+                listarAliquotasEfetivas(apiFetch).catch(() => ({ aliquotas: [] })),
             ])
             config.value = {
                 margemPadraoPct: bpsParaPct(cfg.margem_padrao_bps),
@@ -143,6 +151,9 @@ export function useMargens() {
             custosFixosItens.value = custos
             giroProdutos.value = giro
             mixPagamento.value = mix
+            aliquotasEfetivas.value = Object.fromEntries(
+                aliquotas.map((a) => [a.produto_id, a.imposto_efetivo_bps]),
+            )
             carregado.value = true
         } catch {
             // Painel de sugestão é opcional — sem config carregada, nada é mostrado.
@@ -227,8 +238,14 @@ export function useMargens() {
             .filter(Boolean)
             .join(', ')
         const fretePct = bpsParaPct(overrideProduto(produtoId)?.frete_venda_bps ?? null) ?? config.value.fretePct
+        // Imposto efetivo do produto pelo motor da reforma (fase vigente +
+        // perfil do tenant); sem ele (produto novo/fiscal indisponível), usa o
+        // imposto manual único do tenant como piso de compatibilidade.
+        const impostoPct =
+            (produtoId != null ? bpsParaPct(aliquotasEfetivas.value[produtoId] ?? null) : null) ??
+            config.value.impostoPct
         return [
-            { nome: 'Imposto', pct: config.value.impostoPct },
+            { nome: 'Imposto', pct: impostoPct },
             { nome: 'Comissão', pct: config.value.comissaoPct },
             { nome: rotuloCartao ? `Cartão (${rotuloCartao})` : 'Cartão', pct: cartao.pct },
             { nome: 'Frete', pct: fretePct },

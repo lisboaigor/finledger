@@ -35,6 +35,17 @@ pub async fn buscar(
         .ok_or_else(|| AppError::NotFound.into())
 }
 
+/// Alíquota efetiva de imposto (bps) por produto, na fase vigente hoje e no
+/// perfil do tenant — insumo da precificação assistida (substitui o imposto
+/// manual único). Qualquer usuário autenticado, como o giro de produtos.
+pub async fn aliquotas_efetivas(
+    State(s): State<FiscalState>,
+    _user: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let aliquotas = s.fiscal.listar_aliquota_efetiva_produtos().await?;
+    Ok(Json(json!({ "aliquotas": aliquotas })))
+}
+
 /// Classes tributárias de referência (dado global) — qualquer usuário
 /// autenticado: o select do catálogo é preenchido por quem cadastra produto.
 pub async fn listar_classes_tributarias(

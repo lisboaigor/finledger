@@ -146,6 +146,18 @@ export function listarGiroProdutos(apiFetch: ApiFetch) {
     return apiFetch<{ produtos: GiroProduto[] }>('/catalogo/giro-produtos')
 }
 
+/** Alíquota efetiva de imposto (bps) que é custo do vendedor por produto, na
+ * fase tributária vigente e no perfil do tenant (motor da reforma LC 214/2025).
+ * A precificação usa isto no lugar do imposto manual único. */
+export interface AliquotaEfetivaProduto {
+    produto_id: string
+    imposto_efetivo_bps: number
+}
+
+export function listarAliquotasEfetivas(apiFetch: ApiFetch) {
+    return apiFetch<{ aliquotas: AliquotaEfetivaProduto[] }>('/fiscal/aliquotas-efetivas')
+}
+
 export function obterMixPagamento(apiFetch: ApiFetch) {
     return apiFetch<{ mix: MixPagamento }>('/catalogo/mix-pagamento')
 }

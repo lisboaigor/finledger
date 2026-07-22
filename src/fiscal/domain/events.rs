@@ -15,6 +15,12 @@ pub enum NotaFiscalEvent {
         numero: u32,
         itens: Vec<ItemNF>,
         totais: TotaisNF,
+        /// IBS/CBS destacados são meramente informativos para o emitente
+        /// (Simples Nacional sem regime regular). Congelado aqui a partir do
+        /// perfil vigente na emissão — o BI usa para decidir se IBS/CBS entram
+        /// no custo do vendedor. Eventos são publicados in-process (não
+        /// serializados no event store), então o campo não carrega serde.
+        ibs_cbs_informativo: bool,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },

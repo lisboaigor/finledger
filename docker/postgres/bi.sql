@@ -80,9 +80,18 @@ CREATE TABLE IF NOT EXISTS bi.fato_vendas_item (
     custo_unitario_centavos BIGINT      NOT NULL,
     custo_centavos          BIGINT      NOT NULL,
     margem_centavos         BIGINT      NOT NULL,
+    -- Impostos que são CUSTO do vendedor (da NF, congelados na fase de emissão)
+    -- e a margem já líquida deles. IBS/CBS informativos (Simples via DAS) NÃO
+    -- entram — a decisão é do proj_nf_itens.ibs_cbs_informativo (reforma LC 214).
+    impostos_centavos       BIGINT      NOT NULL DEFAULT 0,
+    margem_liquida_centavos BIGINT      NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_bi_fvi_data ON bi.fato_vendas_item (tenant_id, data_venda);
+-- Reaplicação sobre banco existente (a tabela já existe): adiciona as colunas.
+ALTER TABLE bi.fato_vendas_item
+    ADD COLUMN IF NOT EXISTS impostos_centavos       BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS margem_liquida_centavos BIGINT NOT NULL DEFAULT 0;
 
 -- Grão: 1 linha por orçamento (accumulating snapshot simplificado; data_decisao
 -- é proxy de atualizado_em até o outbox de eventos existir).
@@ -155,7 +164,8 @@ CREATE TABLE IF NOT EXISTS bi.analise_produtos (
     descricao         TEXT        NOT NULL,
     categoria         TEXT        NOT NULL,
     receita_12m       BIGINT      NOT NULL DEFAULT 0,
-    margem_12m        BIGINT      NOT NULL DEFAULT 0,
+    margem_12m        BIGINT      NOT NULL DEFAULT 0,   -- bruta (receita − custo)
+    margem_liquida_12m BIGINT     NOT NULL DEFAULT 0,   -- líquida de impostos da NF
     qtd_12m           BIGINT      NOT NULL DEFAULT 0,
     demanda_dia_90d   NUMERIC     NOT NULL DEFAULT 0,
     cobertura_dias    INTEGER,             -- NULL = sem demanda
@@ -168,6 +178,9 @@ CREATE TABLE IF NOT EXISTS bi.analise_produtos (
     atualizado_em     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (tenant_id, produto_id)
 );
+-- Reaplicação sobre banco existente: adiciona a margem líquida agregada.
+ALTER TABLE bi.analise_produtos
+    ADD COLUMN IF NOT EXISTS margem_liquida_12m BIGINT NOT NULL DEFAULT 0;
 
 -- RFM (recência/frequência/valor, quintis dentro do tenant) + inadimplência —
 -- grão tenant/cliente (apenas clientes com compra identificada em 12m).
@@ -340,7 +353,7 @@ BEGIN
     INSERT INTO bi.fato_vendas_item AS f
         (tenant_id, item_id, venda_id, produto_sk, produto_id, cliente_id, vendedor_id,
          forma_pagamento, status, data_venda, quantidade, receita_centavos,
-         custo_unitario_centavos, custo_centavos, margem_centavos)
+         custo_unitario_centavos, custo_centavos, margem_centavos, margem_liquida_centavos)
     SELECT v.tenant_id, vi.item_id, v.venda_id, dp.sk, vi.produto_id, v.cliente_id, v.vendedor_id,
            v.forma_pagamento, v.status,
            COALESCE(v.confirmada_em, v.atualizado_em)::date,
@@ -348,6 +361,9 @@ BEGIN
            vi.quantidade * vi.preco_unitario_centavos,
            COALESCE(dp.preco_custo, 0),
            vi.quantidade * COALESCE(dp.preco_custo, 0),
+           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(dp.preco_custo, 0)),
+           -- Sem impostos ainda (a NF é projetada logo após); a líquida nasce
+           -- igual à bruta e é ajustada por bi.refresh_impostos_vendas().
            vi.quantidade * (vi.preco_unitario_centavos - COALESCE(dp.preco_custo, 0))
       FROM proj_vendas v
       JOIN proj_vendas_itens vi ON vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
@@ -364,7 +380,12 @@ BEGIN
            receita_centavos = EXCLUDED.receita_centavos,
            custo_centavos = EXCLUDED.quantidade * f.custo_unitario_centavos,
            margem_centavos = EXCLUDED.receita_centavos
-                             - EXCLUDED.quantidade * f.custo_unitario_centavos;
+                             - EXCLUDED.quantidade * f.custo_unitario_centavos,
+           -- Mantém os impostos já conhecidos; a líquida é reajustada aqui e
+           -- reconferida por bi.refresh_impostos_vendas() no mesmo ciclo.
+           margem_liquida_centavos = (EXCLUDED.receita_centavos
+                             - EXCLUDED.quantidade * f.custo_unitario_centavos)
+                             - f.impostos_centavos;
     GET DIAGNOSTICS n = ROW_COUNT;
 
     -- Itens integralmente devolvidos somem da projeção — remove do fato também.
@@ -378,6 +399,55 @@ BEGIN
     UPDATE bi.watermarks
        SET ultimo = COALESCE((SELECT MAX(atualizado_em) FROM proj_vendas), ultimo)
      WHERE tabela = 'proj_vendas';
+    RETURN n;
+END $$;
+
+-- Reconcilia os impostos por item de venda a partir da NF (proj_nf_itens) e
+-- recalcula a margem líquida. "Custo do vendedor": ICMS/ISS/PIS/COFINS/IS
+-- sempre; IBS/CBS só quando NÃO informativos (Simples via DAS) — mesma regra
+-- de ImpostoItem::custo_vendedor_centavos, congelada por linha na projeção.
+--
+-- Recompute por ciclo (sem watermark): a NF é projetada logo APÓS a venda, e o
+-- watermark de proj_vendas não reavançaria para a NF tardia. Volumes de PME.
+-- Uma venda pode ter várias linhas do mesmo produto; os impostos vêm agregados
+-- por produto, então atribuímos o total à 1ª linha do grupo (as demais ficam
+-- com 0) — o SUM por produto/tenant, que é o que o BI consome, fica exato.
+CREATE OR REPLACE FUNCTION bi.refresh_impostos_vendas() RETURNS BIGINT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = bi, public AS $$
+DECLARE n BIGINT;
+BEGIN
+    WITH imp AS (
+        SELECT ni.tenant_id, ni.venda_id, ni.produto_id,
+               SUM(ni.icms_centavos + ni.iss_centavos + ni.pis_centavos
+                   + ni.cofins_centavos + ni.is_centavos
+                   + CASE WHEN ni.ibs_cbs_informativo THEN 0
+                          ELSE ni.cbs_centavos + ni.ibs_uf_centavos + ni.ibs_mun_centavos END
+               ) AS total
+          FROM proj_nf_itens ni
+          JOIN proj_notas_fiscais nf
+            ON nf.tenant_id = ni.tenant_id AND nf.nf_id = ni.nf_id
+         WHERE nf.status <> 'cancelada'
+         GROUP BY 1, 2, 3
+    ),
+    alvo AS (
+        SELECT f.tenant_id, f.item_id, imp.total,
+               ROW_NUMBER() OVER (PARTITION BY f.tenant_id, f.venda_id, f.produto_id
+                                  ORDER BY f.item_id) AS rn
+          FROM bi.fato_vendas_item f
+          JOIN imp ON imp.tenant_id = f.tenant_id
+                  AND imp.venda_id = f.venda_id
+                  AND imp.produto_id = f.produto_id
+    )
+    UPDATE bi.fato_vendas_item f
+       SET impostos_centavos = CASE WHEN a.rn = 1 THEN a.total ELSE 0 END,
+           margem_liquida_centavos =
+               f.margem_centavos - CASE WHEN a.rn = 1 THEN a.total ELSE 0 END
+      FROM alvo a
+     WHERE a.tenant_id = f.tenant_id AND a.item_id = f.item_id
+       AND (f.impostos_centavos <> CASE WHEN a.rn = 1 THEN a.total ELSE 0 END
+            OR f.margem_liquida_centavos
+               <> f.margem_centavos - CASE WHEN a.rn = 1 THEN a.total ELSE 0 END);
+    GET DIAGNOSTICS n = ROW_COUNT;
     RETURN n;
 END $$;
 
@@ -512,14 +582,16 @@ BEGIN
 
     INSERT INTO bi.analise_produtos
         (tenant_id, produto_id, sku, descricao, categoria, receita_12m, margem_12m,
+         margem_liquida_12m,
          qtd_12m, demanda_dia_90d, cobertura_dias, classe_abc, classe_xyz,
          dias_sem_venda, quantidade, estoque_minimo, valor_imobilizado)
     WITH v12 AS (
         SELECT f.tenant_id, f.produto_id,
-               SUM(f.receita_centavos) AS receita,
-               SUM(f.margem_centavos)  AS margem,
-               SUM(f.quantidade)       AS qtd,
-               MAX(f.data_venda)       AS ultima_venda
+               SUM(f.receita_centavos)        AS receita,
+               SUM(f.margem_centavos)         AS margem,
+               SUM(f.margem_liquida_centavos) AS margem_liquida,
+               SUM(f.quantidade)              AS qtd,
+               MAX(f.data_venda)              AS ultima_venda
           FROM bi.fato_vendas_item f
          WHERE f.status = 'confirmada' AND f.data_venda >= CURRENT_DATE - 365
          GROUP BY 1, 2
@@ -559,7 +631,8 @@ BEGIN
                w_total AS (PARTITION BY p.tenant_id)
     )
     SELECT p.tenant_id, p.produto_id, p.sku, p.descricao, p.categoria,
-           COALESCE(v.receita, 0), COALESCE(v.margem, 0), COALESCE(v.qtd, 0),
+           COALESCE(v.receita, 0), COALESCE(v.margem, 0),
+           COALESCE(v.margem_liquida, 0), COALESCE(v.qtd, 0),
            COALESCE(d.dia, 0),
            CASE WHEN COALESCE(d.dia, 0) > 0
                 THEN FLOOR(COALESCE(s.quantidade, 0) / d.dia)::int END,
@@ -1119,6 +1192,7 @@ BEGIN
     PERFORM bi.etl_dim_produto();
     resultado := jsonb_build_object(
         'vendas',    bi.etl_vendas(),
+        'impostos_vendas', bi.refresh_impostos_vendas(),
         'contas',    bi.etl_financeiro(),
         'orcamentos', bi.etl_orcamentos(),
         'estoque',   bi.snapshot_estoque(),
@@ -1135,6 +1209,7 @@ REVOKE ALL ON FUNCTION bi.executar_etl() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.avaliar_alertas() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.etl_dim_produto() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.etl_vendas() FROM PUBLIC;
+REVOKE ALL ON FUNCTION bi.refresh_impostos_vendas() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.etl_financeiro() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.etl_orcamentos() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.snapshot_estoque() FROM PUBLIC;
