@@ -45,7 +45,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\"finledger-backend.*\"}[2m])) * 100",
+          "expr": "docker_container_cpu_usage_percent{container_name=~\"finledger-backend.*\"}",
           "refId": "A"
         }
       ],
@@ -85,7 +85,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(container_memory_working_set_bytes{name=~\"finledger-backend.*\"})",
+          "expr": "docker_container_mem_usage{container_name=~\"finledger-backend.*\"}",
           "refId": "A"
         }
       ],
@@ -535,8 +535,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"finledger.+\"}[2m])) * 100",
-          "legendFormat": "{{name}}",
+          "expr": "docker_container_cpu_usage_percent{container_name=~\"finledger.+\"}",
+          "legendFormat": "{{container_name}}",
           "refId": "A"
         }
       ],
@@ -582,8 +582,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "container_memory_working_set_bytes{name=~\"finledger.+\"}",
-          "legendFormat": "{{name}}",
+          "expr": "docker_container_mem_usage{container_name=~\"finledger.+\"}",
+          "legendFormat": "{{container_name}}",
           "refId": "A"
         }
       ],
@@ -629,8 +629,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (rate(container_network_receive_bytes_total{name=~\"finledger.+\"}[2m]))",
-          "legendFormat": "{{name}}",
+          "expr": "rate(docker_container_net_rx_bytes{container_name=~\"finledger.+\"}[2m])",
+          "legendFormat": "{{container_name}}",
           "refId": "A"
         }
       ],
@@ -676,8 +676,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{name=~\"finledger.+\"}[2m]))",
-          "legendFormat": "{{name}}",
+          "expr": "rate(docker_container_net_tx_bytes{container_name=~\"finledger.+\"}[2m])",
+          "legendFormat": "{{container_name}}",
           "refId": "A"
         }
       ],

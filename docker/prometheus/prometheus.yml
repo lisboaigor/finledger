@@ -20,7 +20,7 @@ scrape_configs:
     static_configs:
       - targets: ["node-exporter:9100"]
 
-  # Por container (cAdvisor).
-  - job_name: cadvisor
+  # Por container (Telegraf + API Docker).
+  - job_name: docker
     static_configs:
-      - targets: ["cadvisor:8080"]
+      - targets: ["telegraf:9273"]

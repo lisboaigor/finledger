@@ -130,21 +130,19 @@ services:
       - /:/host:ro,rslave
     restart: unless-stopped
 
-  # Métricas por container: consumo de CPU/RAM/rede/IO de cada serviço da
-  # stack (backend, frontend, postgres, caddy...). Sem porta publicada.
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
-    # disk/diskIO por container desabilitados: com o Docker usando o storage
-    # containerd-snapshotter (caso da VPS), o cAdvisor não acha a camada de
-    # escrita no layout clássico e descartava o container INTEIRO — sem essas
-    # duas, CPU/RAM/rede por container funcionam (os demais são os default).
-    command:
-      - "--disable_metrics=disk,diskIO,advtcp,cpu_topology,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp"
+  # Métricas por container via API do Docker (CPU/RAM/rede de cada serviço
+  # da stack) — é daqui que sai o consumo do processo do backend. Substitui
+  # o cAdvisor, que perdeu o suporte a Docker (removido na v0.53; a v0.52
+  # quebra com o storage containerd-snapshotter usado por engines novas).
+  # user root + entrypoint direto: o entrypoint padrão da imagem rebaixa o
+  # usuário e perde o acesso ao docker.sock.
+  telegraf:
+    image: telegraf:1.35-alpine
+    user: root
+    entrypoint: ["telegraf"]
     volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     restart: unless-stopped
 
   grafana:
