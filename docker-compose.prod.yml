@@ -133,7 +133,13 @@ services:
   # Métricas por container: consumo de CPU/RAM/rede/IO de cada serviço da
   # stack (backend, frontend, postgres, caddy...). Sem porta publicada.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.2
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    # disk/diskIO por container desabilitados: com o Docker usando o storage
+    # containerd-snapshotter (caso da VPS), o cAdvisor não acha a camada de
+    # escrita no layout clássico e descartava o container INTEIRO — sem essas
+    # duas, CPU/RAM/rede por container funcionam (os demais são os default).
+    command:
+      - "--disable_metrics=disk,diskIO,advtcp,cpu_topology,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
