@@ -25,10 +25,16 @@ pub struct ContaPagar {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<FinanceiroEvent>,
+    /// Documento de origem: pedido de compra ou, em CP de reembolso, a VENDA
+    /// devolvida (a `descricao` deixa o caso explícito).
     pub pedido_id: Uuid,
+    /// Credor: fornecedor do pedido ou, em CP de reembolso, o CLIENTE da venda.
     pub fornecedor_id: Uuid,
     pub valor_original: Dinheiro,
     pub valor_pago: Dinheiro,
+    /// Rótulo humano. Campo novo: `default` para snapshots antigos.
+    #[serde(default)]
+    pub descricao: Option<String>,
     pub vencimento: DateTime<Utc>,
     pub status: StatusContaPagar,
 }
@@ -40,7 +46,27 @@ impl ContaPagar {
         valor: Dinheiro,
         vencimento: DateTime<Utc>,
     ) -> Self {
-        let id = ContaPagarId::new();
+        Self::criar_com_id(
+            ContaPagarId::new(),
+            pedido_id,
+            fornecedor_id,
+            valor,
+            vencimento,
+            None,
+        )
+    }
+
+    /// Criação com id fornecido — os event handlers cross-BC derivam ids
+    /// determinísticos (UUID v5) para que a re-entrega do mesmo evento
+    /// (at-least-once) não duplique contas.
+    pub fn criar_com_id(
+        id: ContaPagarId,
+        pedido_id: Uuid,
+        fornecedor_id: Uuid,
+        valor: Dinheiro,
+        vencimento: DateTime<Utc>,
+        descricao: Option<String>,
+    ) -> Self {
         let mut events = AggregateEvents::default();
         events.raise(FinanceiroEvent::ContaPagarRegistrada {
             conta_id: id.to_string(),
@@ -48,6 +74,7 @@ impl ContaPagar {
             fornecedor_id: fornecedor_id.to_string(),
             valor_centavos: valor.centavos(),
             vencimento,
+            descricao: descricao.clone(),
             occurred_at: Utc::now(),
         });
         Self {
@@ -58,6 +85,7 @@ impl ContaPagar {
             fornecedor_id,
             valor_original: valor,
             valor_pago: Dinheiro::zero(),
+            descricao,
             vencimento,
             status: StatusContaPagar::Pendente,
         }
@@ -84,6 +112,7 @@ impl ContaPagar {
         self.events.raise(FinanceiroEvent::PagamentoEfetuado {
             conta_id: self.id.to_string(),
             valor_centavos: valor.centavos(),
+            valor_pago_total_centavos: self.valor_pago.centavos(),
             occurred_at: Utc::now(),
         });
         if self.valor_pago == self.valor_original {

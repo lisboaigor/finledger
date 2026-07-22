@@ -67,9 +67,12 @@ impl ValueObject for Dinheiro {}
 
 impl std::fmt::Display for Dinheiro {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let reais = self.0 / 100;
-        let cents = self.0.abs() % 100;
-        write!(f, "R$ {reais},{cents:02}")
+        // Formata sobre o valor absoluto e prefixa o sinal explicitamente:
+        // `self.0 / 100` perderia o sinal para valores entre −1 e −99 centavos
+        // (−50 → "R$ 0,50" em vez de "R$ -0,50").
+        let sinal = if self.0 < 0 { "-" } else { "" };
+        let abs = self.0.unsigned_abs();
+        write!(f, "R$ {sinal}{},{:02}", abs / 100, abs % 100)
     }
 }
 
@@ -436,3 +439,31 @@ impl std::fmt::Display for Telefone {
 }
 
 impl ValueObject for Telefone {}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::Dinheiro;
+
+    #[test]
+    fn display_formata_positivos_e_zero() {
+        assert_eq!(Dinheiro::from_centavos(0).to_string(), "R$ 0,00");
+        assert_eq!(Dinheiro::from_centavos(50).to_string(), "R$ 0,50");
+        assert_eq!(Dinheiro::from_centavos(123_456).to_string(), "R$ 1234,56");
+    }
+
+    #[test]
+    fn display_preserva_sinal_entre_menos_um_e_menos_99_centavos() {
+        // Regressão issue #17: -50 imprimia "R$ 0,50" (sinal perdido).
+        assert_eq!(Dinheiro::from_centavos(-1).to_string(), "R$ -0,01");
+        assert_eq!(Dinheiro::from_centavos(-50).to_string(), "R$ -0,50");
+        assert_eq!(Dinheiro::from_centavos(-99).to_string(), "R$ -0,99");
+    }
+
+    #[test]
+    fn display_negativos_maiores_que_um_real() {
+        assert_eq!(Dinheiro::from_centavos(-100).to_string(), "R$ -1,00");
+        assert_eq!(Dinheiro::from_centavos(-123_456).to_string(), "R$ -1234,56");
+    }
+}

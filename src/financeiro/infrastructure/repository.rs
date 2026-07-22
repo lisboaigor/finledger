@@ -7,6 +7,15 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::financeiro::application::queries::{ContaPagarResult, ContaReceberResult};
+
+/// Normaliza paginação vinda de query params: `limite` em 1..=500 (default
+/// 200, o comportamento histórico) e `offset` ≥ 0.
+pub fn normalizar_paginacao(limite: Option<i64>, offset: Option<i64>) -> (i64, i64) {
+    (
+        limite.unwrap_or(200).clamp(1, 500),
+        offset.unwrap_or(0).max(0),
+    )
+}
 use crate::financeiro::domain::conta_pagar::{ContaPagar, ContaPagarId};
 use crate::financeiro::domain::conta_receber::{ContaReceber, ContaReceberId};
 
@@ -23,10 +32,16 @@ impl PostgresContaReceberRepository {
         }
     }
 
-    pub async fn listar(&self) -> Result<Vec<ContaReceberResult>, AppError> {
+    pub async fn listar(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<ContaReceberResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT conta_id, venda_id, cliente_id, valor_original, valor_recebido,
+                    valor_abatido, descricao,
                     CASE status
                         WHEN 'pendente' THEN 'Pendente'
                         WHEN 'parcial' THEN 'Parcial'
@@ -34,21 +49,26 @@ impl PostgresContaReceberRepository {
                         WHEN 'estornada' THEN 'Estornada'
                         ELSE status
                     END AS status
-             FROM proj_contas_receber WHERE tenant_id = $1 ORDER BY vencimento ASC LIMIT 200",
+             FROM proj_contas_receber WHERE tenant_id = $1
+             ORDER BY vencimento ASC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)
     }
 
-    /// Contas em aberto (pendente/parcial) de uma venda — usadas para estorno
-    /// automático quando a venda é desfeita por devolução total.
-    pub async fn contas_abertas_por_venda(&self, venda_id: Uuid) -> Result<Vec<Uuid>, AppError> {
+    /// Todas as contas não estornadas de uma venda (inclusive parciais e
+    /// liquidadas), em ordem de vencimento — usadas nos fluxos de devolução
+    /// (estorno + reembolso na total; abatimento em cascata na parcial).
+    pub async fn contas_por_venda(&self, venda_id: Uuid) -> Result<Vec<Uuid>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_scalar(
             "SELECT conta_id FROM proj_contas_receber
-             WHERE venda_id = $1 AND tenant_id = $2 AND status IN ('pendente', 'parcial')",
+             WHERE venda_id = $1 AND tenant_id = $2 AND status <> 'estornada'
+             ORDER BY vencimento ASC",
         )
         .bind(venda_id)
         .bind(tenant_id)
@@ -61,6 +81,7 @@ impl PostgresContaReceberRepository {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
             "SELECT conta_id, venda_id, cliente_id, valor_original, valor_recebido,
+                    valor_abatido, descricao,
                     CASE status
                         WHEN 'pendente' THEN 'Pendente'
                         WHEN 'parcial' THEN 'Parcial'
@@ -107,19 +128,27 @@ impl PostgresContaPagarRepository {
         }
     }
 
-    pub async fn listar(&self) -> Result<Vec<ContaPagarResult>, AppError> {
+    pub async fn listar(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<ContaPagarResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
-            "SELECT conta_id, pedido_id, fornecedor_id, valor_original, valor_pago,
+            "SELECT conta_id, pedido_id, fornecedor_id, valor_original, valor_pago, descricao,
                     CASE status
                         WHEN 'pendente' THEN 'Pendente'
                         WHEN 'parcial' THEN 'Parcial'
                         WHEN 'liquidada' THEN 'Liquidada'
                         ELSE status
                     END AS status
-             FROM proj_contas_pagar WHERE tenant_id = $1 ORDER BY vencimento ASC LIMIT 200",
+             FROM proj_contas_pagar WHERE tenant_id = $1
+             ORDER BY vencimento ASC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)
@@ -128,7 +157,7 @@ impl PostgresContaPagarRepository {
     pub async fn buscar(&self, conta_id: Uuid) -> Result<Option<ContaPagarResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT conta_id, pedido_id, fornecedor_id, valor_original, valor_pago,
+            "SELECT conta_id, pedido_id, fornecedor_id, valor_original, valor_pago, descricao,
                     CASE status
                         WHEN 'pendente' THEN 'Pendente'
                         WHEN 'parcial' THEN 'Parcial'
