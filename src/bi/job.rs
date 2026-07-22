@@ -28,7 +28,10 @@ pub fn spawn(pool: Pool) {
             {
                 Ok(resultado) => tracing::info!(%resultado, "ciclo de BI executado"),
                 Err(e) => {
-                    tracing::warn!(error = %e, "ciclo de BI falhou — schema `bi` aplicado? (docker/postgres/bi.sql)");
+                    // Erro (não warn): ETL parado congela dashboards e alertas em
+                    // silêncio; o resumo do BI expõe `etl_atualizado_em` para o
+                    // dashboard denunciar dados velhos.
+                    tracing::error!(error = %e, "ciclo de BI falhou — schema `bi` aplicado? (docker/postgres/bi.sql)");
                 }
             }
         }

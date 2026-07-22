@@ -60,20 +60,60 @@ impl EventHandler<VendaEvent> for EstoqueDevolucaoEventHandler {
             ..
         } = event
         {
+            let tenant_id = match crate::shared::tenant::current_tenant_id() {
+                Ok(id) => id,
+                Err(_) => {
+                    tracing::error!(
+                        venda_id,
+                        "devolução sem tenant em escopo — reentrada de estoque PULADA; reconcilie manualmente"
+                    );
+                    return Ok(());
+                }
+            };
             for item in itens_devolvidos {
                 let produto_id = match Uuid::parse_str(&item.produto_id) {
                     Ok(id) => id,
                     Err(_) => continue,
                 };
-                let custo_medio: i64 = sqlx::query_scalar(
-                    "SELECT custo_medio FROM proj_saldo_estoque WHERE produto_id = $1",
+                // O evento ItensDevolvidos não carrega custo (só preço de venda),
+                // então o custo médio ATUAL da projeção é a única fonte. Sem ele
+                // (linha ausente ou erro), NÃO reentramos a custo 0 — isso
+                // distorceria a média ponderada; pulamos e registramos para
+                // reconciliação manual.
+                let custo_medio: i64 = match sqlx::query_scalar::<_, i64>(
+                    "SELECT custo_medio FROM proj_saldo_estoque
+                      WHERE tenant_id = $1 AND produto_id = $2",
                 )
+                .bind(tenant_id)
                 .bind(produto_id)
                 .fetch_optional(&self.pool)
                 .await
-                .ok()
-                .flatten()
-                .unwrap_or(0);
+                {
+                    Ok(Some(custo)) => custo,
+                    Ok(None) => {
+                        tracing::error!(
+                            tenant_id = %tenant_id,
+                            venda_id,
+                            produto_id = %produto_id,
+                            quantidade = item.quantidade,
+                            "produto sem saldo em proj_saldo_estoque — reentrada da devolução PULADA; \
+                             registre a entrada manualmente em Estoque com o custo correto"
+                        );
+                        continue;
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            tenant_id = %tenant_id,
+                            venda_id,
+                            produto_id = %produto_id,
+                            quantidade = item.quantidade,
+                            error = %err,
+                            "falha ao consultar custo médio — reentrada da devolução PULADA; \
+                             registre a entrada manualmente em Estoque com o custo correto"
+                        );
+                        continue;
+                    }
+                };
 
                 if let Err(err) = self
                     .estoque
@@ -86,11 +126,13 @@ impl EventHandler<VendaEvent> for EstoqueDevolucaoEventHandler {
                     })
                     .await
                 {
-                    tracing::warn!(
+                    tracing::error!(
+                        tenant_id = %tenant_id,
                         venda_id,
                         produto_id = %produto_id,
+                        quantidade = item.quantidade,
                         error = %err,
-                        "falha ao reentrar estoque de item devolvido"
+                        "falha ao reentrar estoque de item devolvido — registre a entrada manualmente em Estoque"
                     );
                 }
             }
@@ -116,6 +158,7 @@ impl EventHandler<VendaEvent> for EstoqueVendaEventHandler {
             venda_id, itens, ..
         } = event
         {
+            let tenant_id = crate::shared::tenant::current_tenant_id().ok();
             for item in itens {
                 let produto_id = match Uuid::parse_str(&item.produto_id) {
                     Ok(id) => id,
@@ -130,11 +173,16 @@ impl EventHandler<VendaEvent> for EstoqueVendaEventHandler {
                     })
                     .await
                 {
-                    tracing::warn!(
+                    // A venda já está persistida — a baixa não desfaz. Erro alto
+                    // e com todos os dados para permitir o ajuste manual do saldo.
+                    tracing::error!(
+                        tenant_id = ?tenant_id,
                         venda_id,
                         produto_id = %produto_id,
+                        quantidade = item.quantidade,
                         error = %err,
-                        "falha ao baixar estoque para venda confirmada"
+                        "falha ao baixar estoque para venda confirmada — o saldo NÃO foi \
+                         decrementado; ajuste manualmente o estoque deste produto"
                     );
                 }
             }

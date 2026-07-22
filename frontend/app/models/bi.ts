@@ -192,6 +192,8 @@ export function obterResumoBi(apiFetch: ApiFetch) {
         receita_diaria: ReceitaDia[]
         saude: SaudeNegocio
         meta_faturamento_mensal_centavos: number | null
+        /** Fim do último ciclo de ETL bem-sucedido (ISO); null antes do 1º ciclo. */
+        etl_atualizado_em: string | null
     }>('/bi/resumo')
 }
 

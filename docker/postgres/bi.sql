@@ -301,6 +301,14 @@ LANGUAGE sql IMMUTABLE AS $$
         to_char(v / 100.0, 'FM999,999,999,990.00'), ',', '#'), '.', ','), '#', '.')
 $$;
 
+-- Data local do negócio (America/Sao_Paulo). Todos os cortes de dia/mês do BI
+-- passam por aqui — `::date` direto num timestamptz cortaria em UTC e jogaria
+-- vendas da noite para o dia seguinte (issue #12).
+CREATE OR REPLACE FUNCTION bi.data_local(ts TIMESTAMPTZ) RETURNS DATE
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT (ts AT TIME ZONE 'America/Sao_Paulo')::date
+$$;
+
 -- Lê/inicializa o watermark de uma fonte e devolve o corte (com sobreposição de
 -- 5s para não perder linhas gravadas no mesmo instante da última carga).
 CREATE OR REPLACE FUNCTION bi.watermark_corte(fonte TEXT) RETURNS TIMESTAMPTZ
@@ -311,6 +319,17 @@ BEGIN
     SELECT ultimo INTO wm FROM bi.watermarks WHERE tabela = fonte;
     RETURN wm - INTERVAL '5 seconds';
 END $$;
+
+-- Avança o watermark de uma fonte com atraso de segurança de 30s: um commit em
+-- andamento pode ter atualizado_em anterior ao MAX visível — avançar direto
+-- para o MAX perderia essa linha no próximo ciclo (issue #15). Nunca retrocede.
+CREATE OR REPLACE FUNCTION bi.watermark_avancar(fonte TEXT, maximo TIMESTAMPTZ) RETURNS VOID
+LANGUAGE sql AS $$
+    UPDATE bi.watermarks
+       SET ultimo = GREATEST(ultimo, LEAST(COALESCE(maximo, ultimo),
+                                           now() - INTERVAL '30 seconds'))
+     WHERE tabela = fonte
+$$;
 
 -- ── ETL ───────────────────────────────────────────────────────────────────────
 
@@ -354,21 +373,25 @@ BEGIN
         (tenant_id, item_id, venda_id, produto_sk, produto_id, cliente_id, vendedor_id,
          forma_pagamento, status, data_venda, quantidade, receita_centavos,
          custo_unitario_centavos, custo_centavos, margem_centavos, margem_liquida_centavos)
+    -- Custo congelado: prefere o custo médio real do saldo; cai no preço de
+    -- custo do cadastro (limitação restante: é o custo médio ATUAL, não o da data da venda).
     SELECT v.tenant_id, vi.item_id, v.venda_id, dp.sk, vi.produto_id, v.cliente_id, v.vendedor_id,
            v.forma_pagamento, v.status,
-           COALESCE(v.confirmada_em, v.atualizado_em)::date,
+           bi.data_local(COALESCE(v.confirmada_em, v.atualizado_em)),
            vi.quantidade,
            vi.quantidade * vi.preco_unitario_centavos,
-           COALESCE(dp.preco_custo, 0),
-           vi.quantidade * COALESCE(dp.preco_custo, 0),
-           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(dp.preco_custo, 0)),
+           COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
+           vi.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
+           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
            -- Sem impostos ainda (a NF é projetada logo após); a líquida nasce
            -- igual à bruta e é ajustada por bi.refresh_impostos_vendas().
-           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(dp.preco_custo, 0))
+           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
       FROM proj_vendas v
       JOIN proj_vendas_itens vi ON vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
       LEFT JOIN bi.dim_produto dp
              ON dp.tenant_id = v.tenant_id AND dp.produto_id = vi.produto_id AND dp.atual
+      LEFT JOIN proj_saldo_estoque se
+             ON se.tenant_id = v.tenant_id AND se.produto_id = vi.produto_id
      WHERE v.status IN ('confirmada', 'cancelada') AND v.atualizado_em > corte
     ON CONFLICT (tenant_id, item_id) DO UPDATE
        SET status = EXCLUDED.status,
@@ -396,9 +419,7 @@ BEGIN
        AND NOT EXISTS (SELECT 1 FROM proj_vendas_itens vi
                         WHERE vi.tenant_id = f.tenant_id AND vi.item_id = f.item_id);
 
-    UPDATE bi.watermarks
-       SET ultimo = COALESCE((SELECT MAX(atualizado_em) FROM proj_vendas), ultimo)
-     WHERE tabela = 'proj_vendas';
+    PERFORM bi.watermark_avancar('proj_vendas', (SELECT MAX(atualizado_em) FROM proj_vendas));
     RETURN n;
 END $$;
 
@@ -448,6 +469,18 @@ BEGIN
             OR f.margem_liquida_centavos
                <> f.margem_centavos - CASE WHEN a.rn = 1 THEN a.total ELSE 0 END);
     GET DIAGNOSTICS n = ROW_COUNT;
+
+    -- Impostos órfãos (issue #15): NF cancelada (sem outra válida para a venda)
+    -- deixava o imposto congelado no fato. Zera e devolve a margem líquida à
+    -- bruta. O guard impostos_centavos <> 0 restringe às linhas afetadas —
+    -- a função é recompute por ciclo, não há watermark de vendas aqui.
+    UPDATE bi.fato_vendas_item f
+       SET impostos_centavos = 0,
+           margem_liquida_centavos = f.margem_centavos
+     WHERE f.impostos_centavos <> 0
+       AND NOT EXISTS (SELECT 1 FROM proj_notas_fiscais nf
+                        WHERE nf.tenant_id = f.tenant_id AND nf.venda_id = f.venda_id
+                          AND nf.status <> 'cancelada');
     RETURN n;
 END $$;
 
@@ -504,10 +537,8 @@ BEGIN
      WHERE f.tenant_id = ob.tenant_id AND f.conta_id::text = ob.aggregate_id
        AND f.data_liquidacao IS DISTINCT FROM ob.ts;
 
-    UPDATE bi.watermarks SET ultimo = COALESCE((SELECT MAX(atualizado_em) FROM proj_contas_receber), ultimo)
-     WHERE tabela = 'proj_contas_receber';
-    UPDATE bi.watermarks SET ultimo = COALESCE((SELECT MAX(atualizado_em) FROM proj_contas_pagar), ultimo)
-     WHERE tabela = 'proj_contas_pagar';
+    PERFORM bi.watermark_avancar('proj_contas_receber', (SELECT MAX(atualizado_em) FROM proj_contas_receber));
+    PERFORM bi.watermark_avancar('proj_contas_pagar',   (SELECT MAX(atualizado_em) FROM proj_contas_pagar));
     RETURN n + m;
 END $$;
 
@@ -544,8 +575,7 @@ BEGIN
      WHERE f.tenant_id = ob.tenant_id AND f.orcamento_id::text = ob.aggregate_id
        AND f.data_decisao IS DISTINCT FROM ob.ts;
 
-    UPDATE bi.watermarks SET ultimo = COALESCE((SELECT MAX(atualizado_em) FROM proj_orcamentos), ultimo)
-     WHERE tabela = 'proj_orcamentos';
+    PERFORM bi.watermark_avancar('proj_orcamentos', (SELECT MAX(atualizado_em) FROM proj_orcamentos));
     RETURN n;
 END $$;
 
@@ -556,7 +586,7 @@ DECLARE n BIGINT;
 BEGIN
     INSERT INTO bi.fato_estoque_snapshot
         (tenant_id, produto_id, data, quantidade, custo_medio, valor_centavos, estoque_minimo, em_ruptura)
-    SELECT s.tenant_id, s.produto_id, CURRENT_DATE, s.quantidade, s.custo_medio,
+    SELECT s.tenant_id, s.produto_id, bi.data_local(now()), s.quantidade, s.custo_medio,
            s.quantidade::bigint * s.custo_medio, s.estoque_minimo,
            s.quantidade <= s.estoque_minimo
       FROM proj_saldo_estoque s
@@ -593,16 +623,22 @@ BEGIN
                SUM(f.quantidade)              AS qtd,
                MAX(f.data_venda)              AS ultima_venda
           FROM bi.fato_vendas_item f
-         WHERE f.status = 'confirmada' AND f.data_venda >= CURRENT_DATE - 365
+         WHERE f.status = 'confirmada' AND f.data_venda >= bi.data_local(now()) - 365
          GROUP BY 1, 2
     ),
+    -- Demanda diária: a janela é limitada à vida do produto (issue #15) — um
+    -- produto cadastrado há 10 dias não divide a soma por 90.
     d90 AS (
-        SELECT f.tenant_id, f.produto_id, SUM(f.quantidade)::numeric / 90 AS dia
+        SELECT f.tenant_id, f.produto_id,
+               SUM(f.quantidade)::numeric
+                   / GREATEST(LEAST(90, bi.data_local(now()) - bi.data_local(p.criado_em)), 1) AS dia
           FROM bi.fato_vendas_item f
-         WHERE f.status = 'confirmada' AND f.data_venda >= CURRENT_DATE - 90
-         GROUP BY 1, 2
+          JOIN proj_produtos p ON p.tenant_id = f.tenant_id AND p.produto_id = f.produto_id
+         WHERE f.status = 'confirmada' AND f.data_venda >= bi.data_local(now()) - 90
+         GROUP BY 1, 2, p.criado_em
     ),
-    -- Demanda semanal (26 semanas, com semanas zeradas) → coeficiente de variação.
+    -- Demanda semanal (até 26 semanas, com semanas zeradas, limitada à vida do
+    -- produto — semanas anteriores ao cadastro não entram) → coef. de variação.
     semanal AS (
         SELECT p.tenant_id, p.produto_id, s.w,
                COALESCE(SUM(f.quantidade), 0) AS q
@@ -611,8 +647,9 @@ BEGIN
           LEFT JOIN bi.fato_vendas_item f
                  ON f.tenant_id = p.tenant_id AND f.produto_id = p.produto_id
                 AND f.status = 'confirmada'
-                AND f.data_venda >= CURRENT_DATE - (s.w + 1) * 7
-                AND f.data_venda <  CURRENT_DATE - s.w * 7
+                AND f.data_venda >= bi.data_local(now()) - (s.w + 1) * 7
+                AND f.data_venda <  bi.data_local(now()) - s.w * 7
+         WHERE bi.data_local(now()) - s.w * 7 > bi.data_local(p.criado_em)
          GROUP BY 1, 2, 3
     ),
     cv AS (
@@ -640,12 +677,16 @@ BEGIN
                 WHEN COALESCE(a.acumulado_antes, 0)::numeric / a.total < 0.80 THEN 'A'
                 WHEN COALESCE(a.acumulado_antes, 0)::numeric / a.total < 0.95 THEN 'B'
                 ELSE 'C' END,
-           CASE WHEN COALESCE(c.media, 0) = 0 THEN NULL
+           -- XYZ só com 8+ semanas de vida do produto (issue #15): com menos
+           -- histórico o coeficiente de variação não é confiável → NULL
+           -- ("sem classificação", que os consumidores já toleram).
+           CASE WHEN bi.data_local(now()) - bi.data_local(p.criado_em) < 56 THEN NULL
+                WHEN COALESCE(c.media, 0) = 0 THEN NULL
                 WHEN c.desvio / c.media < 0.5 THEN 'X'
                 WHEN c.desvio / c.media < 1.0 THEN 'Y'
                 ELSE 'Z' END,
            CASE WHEN v.ultima_venda IS NOT NULL
-                THEN (CURRENT_DATE - v.ultima_venda)::int END,
+                THEN (bi.data_local(now()) - v.ultima_venda)::int END,
            COALESCE(s.quantidade, 0), COALESCE(s.estoque_minimo, 0),
            COALESCE(s.quantidade, 0)::bigint * COALESCE(s.custo_medio, 0)
       FROM proj_produtos p
@@ -669,7 +710,7 @@ BEGIN
          score_r, score_f, score_m, segmento, saldo_vencido)
     WITH base AS (
         SELECT v.tenant_id, v.cliente_id,
-               (CURRENT_DATE - MAX(v.confirmada_em)::date)::int AS recencia,
+               (bi.data_local(now()) - bi.data_local(MAX(v.confirmada_em)))::int AS recencia,
                COUNT(*)::int                                    AS freq,
                SUM(v.total_centavos)                            AS valor
           FROM proj_vendas v
@@ -1071,11 +1112,20 @@ DECLARE
     meta NUMERIC; esperado_ate_hoje NUMERIC;
     comp JSONB := '[]'::jsonb;
     nota NUMERIC; soma_pesos NUMERIC := 0; soma_notas NUMERIC := 0;
+    tenant_sessao TEXT := NULLIF(current_setting('app.tenant_id', true), '');
 BEGIN
+    -- SECURITY DEFINER varre fora da RLS: se a sessão tem tenant (GUC do app),
+    -- ele PRECISA bater com o pedido; sem GUC (manutenção/superusuário) passa.
+    IF tenant_sessao IS NOT NULL AND tenant_sessao::uuid <> p_tenant THEN
+        RAISE EXCEPTION 'bi.score_saude: tenant % difere do tenant da sessão', p_tenant;
+    END IF;
+
     SELECT COALESCE(SUM(total_centavos) FILTER (WHERE confirmada_em >= NOW() - INTERVAL '30 days'), 0),
            COALESCE(SUM(total_centavos) FILTER (WHERE confirmada_em >= NOW() - INTERVAL '60 days'
                                                   AND confirmada_em <  NOW() - INTERVAL '30 days'), 0),
-           COALESCE(SUM(total_centavos) FILTER (WHERE confirmada_em >= date_trunc('month', NOW())), 0)
+           COALESCE(SUM(total_centavos) FILTER (
+               WHERE bi.data_local(confirmada_em)
+                     >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date), 0)
       INTO receita_30d, receita_ant, receita_mes
       FROM proj_vendas WHERE tenant_id = p_tenant AND status = 'confirmada';
 
@@ -1099,7 +1149,7 @@ BEGIN
       INTO margem_pct
       FROM bi.fato_vendas_item
      WHERE tenant_id = p_tenant AND status = 'confirmada'
-       AND data_venda >= CURRENT_DATE - 30;
+       AND data_venda >= bi.data_local(now()) - 30;
 
     -- "Parado" = 90+ dias sem vender; quem nunca vendeu só conta se o cadastro
     -- também tem 90+ dias (senão todo tenant recém-migrado nasceria nota 0).
@@ -1166,14 +1216,14 @@ BEGIN
     -- 6. Rumo à meta do mês (peso 15): compara o realizado com a fração da
     --    meta esperada até hoje (proporcional aos dias corridos do mês).
     IF meta IS NOT NULL AND meta > 0 THEN
-        esperado_ate_hoje := meta * EXTRACT(day FROM NOW())
-            / EXTRACT(day FROM (date_trunc('month', NOW()) + INTERVAL '1 month - 1 day'));
+        esperado_ate_hoje := meta * EXTRACT(day FROM bi.data_local(now()))
+            / EXTRACT(day FROM (date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '1 month - 1 day'));
         nota := LEAST(100, GREATEST(0, 100 * receita_mes / esperado_ate_hoje));
         comp := comp || jsonb_build_object('nome', 'Rumo à meta do mês', 'nota', ROUND(nota), 'peso', 15,
             'detalhe', format('%s vendidos de %s da meta (%s%% do mês já passou)',
                               bi.fmt_reais(receita_mes::bigint), bi.fmt_reais(meta::bigint),
-                              ROUND(100 * EXTRACT(day FROM NOW())
-                                  / EXTRACT(day FROM (date_trunc('month', NOW()) + INTERVAL '1 month - 1 day')))));
+                              ROUND(100 * EXTRACT(day FROM bi.data_local(now()))
+                                  / EXTRACT(day FROM (date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') + INTERVAL '1 month - 1 day')))));
         soma_pesos := soma_pesos + 15; soma_notas := soma_notas + nota * 15;
     END IF;
 
@@ -1200,6 +1250,16 @@ BEGIN
         'analise_clientes', bi.calcular_analise_clientes(),
         'alertas',   bi.avaliar_alertas()
     );
+
+    -- Expurgo do outbox (issue #15): eventos com 7+ dias já foram incorporados
+    -- aos fatos em dezenas de ciclos — sem isso a tabela cresceria para sempre.
+    DELETE FROM bi.eventos_outbox WHERE ocorrido_em < now() - INTERVAL '7 days';
+
+    -- Marca o fim do ciclo bem-sucedido — exposto no resumo do BI como
+    -- `etl_atualizado_em` para o dashboard denunciar ETL parado (issue #15).
+    INSERT INTO bi.watermarks (tabela, ultimo) VALUES ('etl_ciclo', now())
+    ON CONFLICT (tabela) DO UPDATE SET ultimo = EXCLUDED.ultimo;
+
     RETURN resultado;
 END $$;
 
@@ -1215,6 +1275,9 @@ REVOKE ALL ON FUNCTION bi.etl_orcamentos() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.snapshot_estoque() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.calcular_analise_produtos() FROM PUBLIC;
 REVOKE ALL ON FUNCTION bi.calcular_analise_clientes() FROM PUBLIC;
+-- score_saude é SECURITY DEFINER e varre fora da RLS — só o role do app
+-- executa (e a própria função valida p_tenant contra a GUC da sessão).
+REVOKE ALL ON FUNCTION bi.score_saude(UUID) FROM PUBLIC;
 
 DO $$ BEGIN
     IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'finledger') THEN
@@ -1226,8 +1289,12 @@ DO $$ BEGIN
         -- Feedback do gestor (Resolvido/Ignorar) e outbox do EventBus.
         GRANT SELECT, UPDATE ON bi.alertas TO finledger;
         GRANT INSERT ON bi.eventos_outbox TO finledger;
+        -- Metadados do pipeline (timestamp do último ETL no resumo do BI).
+        GRANT SELECT ON bi.watermarks TO finledger;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA bi TO finledger;
         GRANT EXECUTE ON FUNCTION bi.executar_etl() TO finledger;
         GRANT EXECUTE ON FUNCTION bi.fmt_reais(NUMERIC) TO finledger;
+        GRANT EXECUTE ON FUNCTION bi.data_local(TIMESTAMPTZ) TO finledger;
+        GRANT EXECUTE ON FUNCTION bi.score_saude(UUID) TO finledger;
     END IF;
 END $$;

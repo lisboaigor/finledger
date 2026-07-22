@@ -30,16 +30,17 @@ impl EstoqueProjection {
                 let qty = *quantidade as i32;
                 let custo = *custo_unitario_centavos;
                 // UPSERT: na inserção usa o custo da entrada como custo_medio inicial;
-                // no conflito recalcula a média ponderada.
+                // no conflito recalcula a média ponderada com arredondamento
+                // half-up (a divisão inteira truncava e enviesava o custo p/ baixo).
                 sqlx::query(
                     "INSERT INTO proj_saldo_estoque (produto_id, quantidade, custo_medio, atualizado_em, tenant_id)
                      VALUES ($1, $2, $3, $4, $5)
                      ON CONFLICT (tenant_id, produto_id) DO UPDATE SET
                          custo_medio   = CASE
                              WHEN proj_saldo_estoque.quantidade + EXCLUDED.quantidade = 0 THEN 0
-                             ELSE (proj_saldo_estoque.custo_medio * proj_saldo_estoque.quantidade
-                                   + EXCLUDED.custo_medio * EXCLUDED.quantidade)
-                                  / (proj_saldo_estoque.quantidade + EXCLUDED.quantidade)
+                             ELSE ROUND((proj_saldo_estoque.custo_medio::numeric * proj_saldo_estoque.quantidade
+                                   + EXCLUDED.custo_medio::numeric * EXCLUDED.quantidade)
+                                  / NULLIF(proj_saldo_estoque.quantidade + EXCLUDED.quantidade, 0))::BIGINT
                              END,
                          quantidade    = proj_saldo_estoque.quantidade + EXCLUDED.quantidade,
                          atualizado_em = EXCLUDED.atualizado_em",

@@ -244,6 +244,10 @@ function iconePi(classe: string): Component {
                 </CardContent>
             </Card>
         </div>
+        <!-- Frescor do BI: denuncia ETL parado sem alarde. -->
+        <p v-if="bi.indicadores.length && bi.etlAtualizadoTexto" class="-mt-2 mb-4 text-right text-xs text-muted-foreground">
+            {{ bi.etlAtualizadoTexto }}
+        </p>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
             <NuxtLink v-for="card in vm.cards" :key="card.label" :to="card.to" class="block">

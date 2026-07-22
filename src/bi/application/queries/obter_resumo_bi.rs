@@ -35,6 +35,10 @@ pub struct BiResumoCompleto {
     pub saude: serde_json::Value,
     /// Meta de faturamento do mês (Configurações); None = sem meta definida.
     pub meta_faturamento_mensal_centavos: Option<i64>,
+    /// Fim do último ciclo de ETL bem-sucedido (`bi.watermarks` / `etl_ciclo`);
+    /// None enquanto o primeiro ciclo não roda. O dashboard usa para mostrar
+    /// "atualizado há X min" e denunciar ETL parado.
+    pub etl_atualizado_em: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Query)]
@@ -50,6 +54,7 @@ impl QueryHandler<ObterResumoBi> for BiHandlers {
             receita_diaria: self.repo.receita_diaria().await?,
             saude: self.repo.score_saude().await?,
             meta_faturamento_mensal_centavos: self.repo.meta_faturamento().await?,
+            etl_atualizado_em: self.repo.etl_atualizado_em().await?,
         })
     }
 }

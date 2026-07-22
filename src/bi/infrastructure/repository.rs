@@ -44,34 +44,53 @@ impl PostgresBiRepository {
         Ok(meta.flatten())
     }
 
+    /// Timestamp do último ciclo de ETL bem-sucedido (`bi.watermarks`, chave
+    /// `etl_ciclo`); `None` enquanto o primeiro ciclo não roda.
+    pub async fn etl_atualizado_em(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>, AppError> {
+        sqlx::query_scalar("SELECT ultimo FROM bi.watermarks WHERE tabela = 'etl_ciclo'")
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::infra)
+    }
+
     pub async fn resumo(&self) -> Result<BiResumoResult, AppError> {
+        // Cortes de mês/dia no fuso do negócio (bi.data_local — issue #12).
         sqlx::query_as(
             r#"
             SELECT
                 (SELECT COALESCE(SUM(total_centavos), 0) FROM proj_vendas
                   WHERE status = 'confirmada'
-                    AND confirmada_em >= date_trunc('month', NOW()))::bigint
+                    AND bi.data_local(confirmada_em)
+                        >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)::bigint
                     AS receita_mes_centavos,
                 (SELECT COALESCE(SUM(total_centavos), 0) FROM proj_vendas
                   WHERE status = 'confirmada'
-                    AND confirmada_em >= date_trunc('month', NOW()) - INTERVAL '1 month'
-                    AND confirmada_em <  date_trunc('month', NOW()))::bigint
+                    AND bi.data_local(confirmada_em)
+                        >= (date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') - INTERVAL '1 month')::date
+                    AND bi.data_local(confirmada_em)
+                        <  date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)::bigint
                     AS receita_mes_anterior_centavos,
                 (SELECT COALESCE(SUM(valor_original - valor_recebido), 0) FROM proj_contas_receber
                   WHERE status IN ('pendente', 'parcial') AND vencimento < NOW())::bigint
                     AS vencidas_centavos,
+                -- "Esperado em 30 dias": só recebíveis A VENCER na janela — as
+                -- vencidas ficam exclusivamente no card de atrasados (issue #15).
+                -- Contas a PAGAR vencidas continuam entrando: são saída certa.
                 ((SELECT COALESCE(SUM(valor_original - valor_recebido), 0) FROM proj_contas_receber
-                   WHERE status IN ('pendente', 'parcial') AND vencimento <= NOW() + INTERVAL '30 days')
+                   WHERE status IN ('pendente', 'parcial')
+                     AND vencimento >= NOW() AND vencimento <= NOW() + INTERVAL '30 days')
                  - (SELECT COALESCE(SUM(valor_original - valor_pago), 0) FROM proj_contas_pagar
                      WHERE status IN ('pendente', 'parcial') AND vencimento <= NOW() + INTERVAL '30 days'))::bigint
                     AS caixa_30d_centavos,
                 (SELECT SUM(margem_centavos)::float8 / NULLIF(SUM(receita_centavos), 0)::float8 * 100
                    FROM bi.fato_vendas_item
-                  WHERE status = 'confirmada' AND data_venda >= date_trunc('month', NOW())::date)
+                  WHERE status = 'confirmada'
+                    AND data_venda >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)
                     AS margem_percent,
                 (SELECT SUM(margem_liquida_centavos)::float8 / NULLIF(SUM(receita_centavos), 0)::float8 * 100
                    FROM bi.fato_vendas_item
-                  WHERE status = 'confirmada' AND data_venda >= date_trunc('month', NOW())::date)
+                  WHERE status = 'confirmada'
+                    AND data_venda >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)
                     AS margem_liquida_percent,
                 (SELECT (COUNT(*) FILTER (WHERE status = 'convertido'))::float8
                         / NULLIF(COUNT(*) FILTER (WHERE status IN ('aceito', 'recusado', 'expirado', 'convertido')), 0)::float8
@@ -91,9 +110,9 @@ impl PostgresBiRepository {
             r#"
             SELECT to_char(d, 'YYYY-MM-DD') AS dia,
                    COALESCE(SUM(v.total_centavos), 0)::bigint AS total_centavos
-              FROM generate_series((NOW() - INTERVAL '29 days')::date, NOW()::date, '1 day') AS d
+              FROM generate_series(bi.data_local(now()) - 29, bi.data_local(now()), '1 day') AS d
               LEFT JOIN proj_vendas v
-                     ON v.status = 'confirmada' AND v.confirmada_em::date = d::date
+                     ON v.status = 'confirmada' AND bi.data_local(v.confirmada_em) = d::date
              GROUP BY d
              ORDER BY d
             "#,
@@ -134,7 +153,7 @@ impl PostgresBiRepository {
             cmv AS (
                 SELECT COALESCE(SUM(custo_centavos), 0)::numeric / 90 AS dia
                   FROM bi.fato_vendas_item
-                 WHERE status = 'confirmada' AND data_venda >= CURRENT_DATE - 90),
+                 WHERE status = 'confirmada' AND data_venda >= bi.data_local(now()) - 90),
             compras AS (
                 SELECT COALESCE(SUM(total_centavos), 0)::numeric / 90 AS dia
                   FROM proj_pedidos_compra

@@ -14,6 +14,7 @@ export function useBiViewModel() {
     const receitaDiaria = ref<ReceitaDia[]>([])
     const saude = ref<SaudeNegocio | null>(null)
     const metaCentavos = ref<number | null>(null)
+    const etlAtualizadoEm = ref<string | null>(null)
 
     async function carregar() {
         loading.value = true
@@ -23,6 +24,7 @@ export function useBiViewModel() {
             receitaDiaria.value = r.receita_diaria
             saude.value = r.saude
             metaCentavos.value = r.meta_faturamento_mensal_centavos
+            etlAtualizadoEm.value = r.etl_atualizado_em
         } catch {
             /* módulo de BI indisponível — o dashboard operacional continua */
         } finally {
@@ -148,6 +150,19 @@ export function useBiViewModel() {
         }
     })
 
+    /** "Atualizado há X min" do último ciclo de ETL do BI — denuncia dados
+     * congelados quando o ETL para (issue #15). Null antes do 1º ciclo. */
+    const etlAtualizadoTexto = computed(() => {
+        const iso = etlAtualizadoEm.value
+        if (!iso) return null
+        const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+        if (min < 1) return 'atualizado agora'
+        if (min < 60) return `atualizado há ${min} min`
+        const h = Math.floor(min / 60)
+        if (h < 48) return `atualizado há ${h} h`
+        return `atualizado há ${Math.floor(h / 24)} dias`
+    })
+
     /** Leitura do score: faixa de cor e frase-resumo. */
     const tomSaude = computed(() => {
         const s = saude.value?.score
@@ -164,6 +179,7 @@ export function useBiViewModel() {
         saude,
         tomSaude,
         metaProgresso,
+        etlAtualizadoTexto,
         indicadores,
         chartReceitaData,
         chartReceitaConfig,
