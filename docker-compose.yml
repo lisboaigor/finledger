@@ -47,7 +47,7 @@ services:
   # Métricas por container (CPU, RAM, rede, IO de cada serviço da stack) —
   # é daqui que sai o consumo do processo do backend/frontend/postgres.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    image: gcr.io/cadvisor/cadvisor:v0.49.2
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
