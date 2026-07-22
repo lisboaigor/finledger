@@ -35,6 +35,26 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Métricas do host (CPU, RAM, disco, rede). Sem porta publicada: só o
+  # Prometheus, na mesma rede do compose, raspa o :9100. Sem o bind do
+  # rootfs (o mount `rslave` do prod não funciona no Docker Desktop/macOS):
+  # os números aqui são da VM Linux do Docker, não do Mac — suficiente para
+  # desenvolver o dashboard; em produção (Linux) refletem a VPS de verdade.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+
+  # Métricas por container (CPU, RAM, rede, IO de cada serviço da stack) —
+  # é daqui que sai o consumo do processo do backend/frontend/postgres.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.6.1
     ports:

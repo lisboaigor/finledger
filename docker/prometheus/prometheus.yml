@@ -13,3 +13,14 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # Host: CPU, memória, disco e rede. Em macOS os números são da VM do
+  # Docker Desktop; em Linux (produção), do host de verdade.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Por container (cAdvisor).
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

@@ -16,3 +16,13 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  # Host da VPS: CPU, memória, disco e rede (node_exporter, rede do compose).
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Por container: consumo de cada serviço da stack (cAdvisor).
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]

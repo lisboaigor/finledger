@@ -119,6 +119,28 @@ services:
       - backend
     restart: unless-stopped
 
+  # Métricas do host da VPS (CPU, RAM, disco, rede). Sem porta publicada:
+  # só o Prometheus, na rede interna do compose, raspa o :9100 — nada
+  # exposto à internet (mesmo padrão do backend :9464).
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - /:/host:ro,rslave
+    restart: unless-stopped
+
+  # Métricas por container: consumo de CPU/RAM/rede/IO de cada serviço da
+  # stack (backend, frontend, postgres, caddy...). Sem porta publicada.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.6.1
     ports:
