@@ -106,6 +106,28 @@ impl NotaFiscal {
         Ok(())
     }
 
+    /// Nova tentativa de transmissão de uma NF presa: `Transmitida` (a SEFAZ
+    /// ficou indisponível na primeira tentativa e a resposta nunca chegou) ou
+    /// `Rejeitada` (após correção da causa). Também aceita `Gerada`, cobrindo o
+    /// papel que `transmitir()` fazia na retransmissão manual.
+    pub fn retransmitir(&mut self) -> DomainResult<()> {
+        if !matches!(
+            self.status,
+            StatusNFe::Gerada | StatusNFe::Transmitida | StatusNFe::Rejeitada
+        ) {
+            return Err(DomainError::BusinessRule(
+                "Apenas NF gerada, transmitida ou rejeitada pode ser retransmitida".into(),
+            ));
+        }
+        self.events.raise(NotaFiscalEvent::NotaFiscalRetransmitida {
+            nf_id: self.id.to_string(),
+            status_anterior: format!("{:?}", self.status),
+            occurred_at: Utc::now(),
+        });
+        self.status = StatusNFe::Transmitida;
+        Ok(())
+    }
+
     pub fn autorizar(&mut self, chave: String, protocolo: String) -> DomainResult<()> {
         if self.status != StatusNFe::Transmitida {
             return Err(DomainError::BusinessRule(
@@ -158,11 +180,13 @@ impl NotaFiscal {
 
     /// Marca a nota para cancelamento futuro — usado quando a devolução ocorre
     /// antes de a integração SEFAZ estar em operação. O cancelamento efetivo
-    /// acontece via `cancelar()` quando a integração for ativada.
+    /// acontece via `cancelar()` quando a integração for ativada. Também aceita
+    /// NF presa em `Transmitida` (a SEFAZ pode tê-la autorizado sem a resposta
+    /// chegar — o cancelamento pendente cobre esse limbo com segurança).
     pub fn solicitar_cancelamento(&mut self, motivo: String) -> DomainResult<()> {
-        if self.status != StatusNFe::Autorizada {
+        if !matches!(self.status, StatusNFe::Autorizada | StatusNFe::Transmitida) {
             return Err(DomainError::BusinessRule(
-                "Apenas NF autorizada pode ter cancelamento solicitado".into(),
+                "Apenas NF autorizada ou transmitida pode ter cancelamento solicitado".into(),
             ));
         }
         if self.cancelamento_pendente {
@@ -319,6 +343,46 @@ mod tests {
             nf.cancelar("CANC001".into()),
             Err(DomainError::BusinessRule(_))
         ));
+    }
+
+    #[test]
+    fn retransmitir_nf_rejeitada_volta_para_transmitida() {
+        let mut nf = nf_gerada();
+        nf.transmitir().expect("transmitir");
+        nf.rejeitar("539".into(), "duplicidade".into()).expect("rejeitar");
+        nf.retransmitir().expect("retransmitir NF rejeitada");
+        assert_eq!(nf.status, StatusNFe::Transmitida);
+        nf.autorizar("chave".into(), "proto".into())
+            .expect("autorizar após retransmissão");
+        assert_eq!(nf.status, StatusNFe::Autorizada);
+    }
+
+    #[test]
+    fn retransmitir_nf_presa_em_transmitida_e_permitido() {
+        let mut nf = nf_gerada();
+        nf.transmitir().expect("transmitir");
+        // SEFAZ indisponível: ficou em Transmitida sem resposta.
+        nf.retransmitir().expect("retransmitir NF transmitida");
+        assert_eq!(nf.status, StatusNFe::Transmitida);
+    }
+
+    #[test]
+    fn retransmitir_nf_autorizada_ou_cancelada_retorna_erro() {
+        let mut nf = nf_gerada();
+        nf.transmitir().expect("transmitir");
+        nf.autorizar("chave".into(), "proto".into()).expect("autorizar");
+        assert!(matches!(nf.retransmitir(), Err(DomainError::BusinessRule(_))));
+        nf.cancelar("CANC001".into()).expect("cancelar");
+        assert!(matches!(nf.retransmitir(), Err(DomainError::BusinessRule(_))));
+    }
+
+    #[test]
+    fn solicitar_cancelamento_de_nf_transmitida_marca_pendente() {
+        let mut nf = nf_gerada();
+        nf.transmitir().expect("transmitir");
+        nf.solicitar_cancelamento("devolução".into())
+            .expect("NF presa em transmitida aceita cancelamento pendente");
+        assert!(nf.cancelamento_pendente);
     }
 
     #[test]

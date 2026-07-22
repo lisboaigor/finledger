@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::fiscal::domain::tributacao::{
-    CodigoMunicipio, Crt, PerfilFiscal, RegimeTributario, Uf,
+    Aliquota, CodigoMunicipio, Crt, PerfilFiscal, RegimeTributario, Uf,
 };
 use crate::shared::tenant::current_tenant_id;
 
@@ -309,7 +309,8 @@ impl TenantRepository {
     pub async fn obter_perfil_fiscal(&self) -> Result<PerfilFiscalDto, AppError> {
         let tenant_id = current_tenant_id()?;
         let row = sqlx::query_as(
-            "SELECT regime_tributario, uf, codigo_municipio, crt, ibs_cbs_regime_regular
+            "SELECT regime_tributario, uf, codigo_municipio, crt, ibs_cbs_regime_regular,
+                    aliquota_das_bps
              FROM tenants WHERE tenant_id = $1",
         )
         .bind(tenant_id)
@@ -327,14 +328,15 @@ impl TenantRepository {
         let n = sqlx::query(
             "UPDATE tenants
              SET regime_tributario = $1, uf = $2, codigo_municipio = $3, crt = $4,
-                 ibs_cbs_regime_regular = $5
-             WHERE tenant_id = $6",
+                 ibs_cbs_regime_regular = $5, aliquota_das_bps = $6
+             WHERE tenant_id = $7",
         )
         .bind(dto.regime_tributario)
         .bind(dto.uf)
         .bind(dto.codigo_municipio)
         .bind(dto.crt)
         .bind(dto.ibs_cbs_regime_regular)
+        .bind(dto.aliquota_das_bps)
         .bind(tenant_id)
         .execute(&self.pool)
         .await
@@ -587,6 +589,10 @@ pub struct PerfilFiscalDto {
     pub crt: Option<i16>,
     #[serde(default)]
     pub ibs_cbs_regime_regular: bool,
+    /// Alíquota efetiva do DAS em bps (Simples Nacional) — custo tributário do
+    /// vendedor quando o Simples está configurado. Opcional/aditivo.
+    #[serde(default)]
+    pub aliquota_das_bps: Option<i32>,
 }
 
 impl PerfilFiscalDto {
@@ -614,6 +620,14 @@ impl PerfilFiscalDto {
             })?)
             .map_err(AppError::Domain)?,
             ibs_cbs_regime_regular: self.ibs_cbs_regime_regular,
+            aliquota_das_bps: self
+                .aliquota_das_bps
+                .map(Aliquota::try_from)
+                .transpose()
+                .map_err(AppError::Domain)?,
+            // Chegou aqui = veio de configuração explícita do tenant (o
+            // fallback `padrao_legado` nasce com `configurado = false`).
+            configurado: true,
         }))
     }
 }

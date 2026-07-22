@@ -141,6 +141,23 @@ impl FiscalProjection {
                 .await?;
             }
 
+            NotaFiscalEvent::NotaFiscalRetransmitida {
+                nf_id, occurred_at, ..
+            } => {
+                let nf_uuid =
+                    uuid::Uuid::parse_str(nf_id).map_err(|e| sqlx::Error::Decode(e.into()))?;
+                sqlx::query(
+                    "UPDATE proj_notas_fiscais
+                     SET status='transmitida', atualizado_em=$2
+                     WHERE nf_id=$1 AND tenant_id=$3",
+                )
+                .bind(nf_uuid)
+                .bind(occurred_at)
+                .bind(tenant_id)
+                .execute(&self.pool)
+                .await?;
+            }
+
             NotaFiscalEvent::NotaFiscalAutorizada {
                 nf_id,
                 chave,

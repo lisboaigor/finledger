@@ -30,6 +30,16 @@ pub enum NotaFiscalEvent {
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },
+    /// Nova tentativa de transmissão de NF presa (transmitida sem resposta da
+    /// SEFAZ ou rejeitada após correção). `status_anterior` documenta de onde
+    /// a nota saiu.
+    NotaFiscalRetransmitida {
+        #[aggregate_id]
+        nf_id: String,
+        status_anterior: String,
+        #[occurred_at]
+        occurred_at: DateTime<Utc>,
+    },
     NotaFiscalAutorizada {
         #[aggregate_id]
         nf_id: String,

@@ -9,15 +9,21 @@ use super::queries::AliquotaEfetivaProduto;
 use crate::error::AppError;
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
 use crate::fiscal::domain::tributacao::{
-    ClasseTributaria, ContextoFiscal, FaseTransicao, MotorTributario, PerfilFiscal,
+    AliquotasItem, ClasseTributaria, ContextoFiscal, FaseTransicao, MotorTributario, PerfilFiscal,
+    RegimeTributario, hoje_brasil,
 };
 use crate::fiscal::domain::value_objects::{ItemNF, ModeloNF};
 use crate::fiscal::infrastructure::aliquotas::AliquotaProvider;
 use crate::fiscal::infrastructure::repository::PostgresNotaFiscalRepository;
 use crate::fiscal::infrastructure::sefaz::{SefazClient, SefazError};
+use crate::shared::tenant::current_tenant_id;
 use crate::shared::{load_aggregate, salvar_aggregate};
 use crate::tenants::repository::TenantRepository;
 use crate::vendas::domain::events::ItemVendaSnapshot;
+
+/// Série única de emissão enquanto não há gestão de séries (issue #16 segue
+/// aberta para CFOP/ICMS-ST e múltiplas séries).
+const SERIE_PADRAO: i32 = 1;
 
 pub struct FiscalHandlers<S: SefazClient, A: AliquotaProvider> {
     pub(crate) repo: Arc<PostgresNotaFiscalRepository>,
@@ -60,13 +66,13 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             .enriquecer_itens(itens_venda, desconto_centavos, &modelo)
             .await?;
 
-        let numero = (Uuid::new_v4().as_u128() % 999_999_999u128 + 1) as u32;
+        let numero = self.proximo_numero(SERIE_PADRAO).await?;
 
         let mut nf = NotaFiscal::gerar(
             venda_id,
             cliente_id,
             modelo,
-            "001".into(),
+            format!("{SERIE_PADRAO:03}"),
             numero,
             itens_nf,
             desconto_centavos,
@@ -92,6 +98,29 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         self.salvar(&mut nf).await
     }
 
+    /// Próximo número da NF na série, sequencial e atômico por (tenant, série):
+    /// o `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` incrementa e devolve
+    /// em uma única instrução — duas emissões concorrentes nunca repetem número.
+    async fn proximo_numero(&self, serie: i32) -> Result<u32, AppError> {
+        let tenant_id = current_tenant_id()?;
+        let proximo: i64 = sqlx::query_scalar(
+            "INSERT INTO fiscal_numeracao (tenant_id, serie) VALUES ($1, $2)
+             ON CONFLICT (tenant_id, serie)
+             DO UPDATE SET proximo = fiscal_numeracao.proximo + 1
+             RETURNING proximo",
+        )
+        .bind(tenant_id)
+        .bind(serie)
+        .fetch_one(self.repo.pool())
+        .await
+        .map_err(AppError::infra)?;
+        u32::try_from(proximo).map_err(|_| {
+            AppError::Domain(pharos_core::DomainError::BusinessRule(format!(
+                "Numeração da série {serie} esgotada ({proximo})"
+            )))
+        })
+    }
+
     /// Integração real com a SEFAZ liberada? Enquanto os trâmites burocráticos
     /// não saem, cancelamentos de devolução ficam PENDENTES na nota.
     fn integracao_sefaz_ativa() -> bool {
@@ -114,22 +143,48 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         devolucao_total: bool,
         motivo: &str,
     ) -> Result<(), AppError> {
-        let nf_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT nf_id FROM proj_notas_fiscais
-             WHERE venda_id = $1 AND status = 'autorizada'
+        // Além da autorizada, considera NF presa em 'transmitida' (SEFAZ pode
+        // tê-la autorizado sem a resposta chegar) e 'rejeitada' (sem efeito
+        // fiscal) — antes elas ficavam invisíveis para a devolução.
+        let linha: Option<(Uuid, String)> = sqlx::query_as(
+            "SELECT nf_id, status FROM proj_notas_fiscais
+             WHERE venda_id = $1 AND tenant_id = $2
+               AND status IN ('autorizada', 'transmitida', 'rejeitada')
              ORDER BY gerada_em DESC LIMIT 1",
         )
         .bind(venda_id)
+        .bind(current_tenant_id()?)
         .fetch_optional(self.repo.pool())
         .await
         .map_err(AppError::infra)?;
 
-        let Some(nf_id) = nf_id else {
-            tracing::info!(%venda_id, "devolução sem NF autorizada — nada a cancelar no fiscal");
+        let Some((nf_id, status)) = linha else {
+            tracing::info!(%venda_id, "devolução sem NF autorizada/transmitida/rejeitada — nada a cancelar no fiscal");
             return Ok(());
         };
 
+        if status == "rejeitada" {
+            // NF rejeitada nunca produziu efeito fiscal: não há o que cancelar
+            // nem reemitir — apenas registra a decisão.
+            tracing::info!(%venda_id, %nf_id, "devolução sobre NF rejeitada — sem efeito fiscal, nada a cancelar");
+            return Ok(());
+        }
+
         let mut nf = self.carregar(NotaFiscalId::from_uuid(nf_id)).await?;
+        if status == "transmitida" {
+            // Presa no limbo: transmitida sem resposta da SEFAZ. Marca o
+            // cancelamento como pendente (cobre o caso de ela ter sido
+            // autorizada do outro lado) — resolve-se na tela Fiscal.
+            tracing::warn!(%venda_id, %nf_id, "devolução sobre NF presa em 'transmitida' — marcando cancelamento pendente");
+            if nf.cancelamento_pendente {
+                tracing::info!(%venda_id, "NF já com cancelamento pendente; devolução adicional registrada");
+            } else {
+                nf.solicitar_cancelamento(format!("Devolução de itens: {motivo}"))?;
+                self.salvar(&mut nf).await?;
+            }
+            return Ok(());
+        }
+
         if Self::integracao_sefaz_ativa() {
             let proto = format!("CANC{}", Uuid::new_v4().simple());
             nf.cancelar(proto)?;
@@ -159,17 +214,20 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         self.salvar(&mut nf).await
     }
 
+    /// Retransmite uma NF presa: `Gerada` (nunca saiu), `Transmitida` (SEFAZ
+    /// ficou indisponível e a resposta nunca chegou) ou `Rejeitada` (após
+    /// correção). O agregado valida a transição em `NotaFiscal::retransmitir`.
     pub(crate) async fn retransmitir(&self, cmd: RetransmitirNotaFiscal) -> Result<(), AppError> {
         let nf_id = NotaFiscalId::from(cmd.nf_id);
         let mut nf = self.carregar(nf_id).await?;
         let xml = format!("<NF>{}</NF>", nf.id());
         match self.sefaz.transmitir(xml).await {
             Ok(resp) => {
-                nf.transmitir()?;
+                nf.retransmitir()?;
                 nf.autorizar(resp.chave, resp.protocolo)?;
             }
             Err(SefazError::Rejeicao { codigo, motivo }) => {
-                nf.transmitir()?;
+                nf.retransmitir()?;
                 nf.rejeitar(codigo, motivo)?;
             }
             Err(SefazError::Indisponivel(msg)) => {
@@ -232,7 +290,9 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             .await?
             .para_dominio()?
             .unwrap_or_else(PerfilFiscal::padrao_legado);
-        let data_emissao = chrono::Utc::now().date_naive();
+        // Dia fiscal no Brasil (America/Sao_Paulo), não em UTC — NF emitida à
+        // noite não pode pular de dia (nem de fase, na virada de ano).
+        let data_emissao = hoje_brasil();
         let ctx = ContextoFiscal {
             fase: FaseTransicao::de_data(data_emissao),
             perfil,
@@ -244,9 +304,11 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         for (item, desconto_item) in itens.iter().zip(rateio) {
             let produto_id = Uuid::parse_str(&item.produto_id).map_err(AppError::infra)?;
             let linha: Option<(String, Option<String>)> = sqlx::query_as(
-                "SELECT ncm, c_class_trib FROM proj_produtos WHERE produto_id = $1",
+                "SELECT ncm, c_class_trib FROM proj_produtos
+                 WHERE produto_id = $1 AND tenant_id = $2",
             )
             .bind(produto_id)
+            .bind(current_tenant_id()?)
             .fetch_optional(self.repo.pool())
             .await
             .map_err(AppError::infra)?;
@@ -261,6 +323,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
                 .aliquotas
                 .resolver(data_emissao, &ctx.perfil, &classe.classe, &ncm)
                 .await?;
+            Self::avisar_tributo_obrigatorio_ausente(&ctx, &aliquotas, &ncm);
 
             // Base tributável = subtotal do item − quota do desconto rateado.
             // Com desconto zero a base é o subtotal íntegro (números idênticos
@@ -281,6 +344,51 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         Ok((result, ibs_cbs_informativo))
     }
 
+    /// Zero silencioso (issue #10): um tributo OBRIGATÓRIO na fase que resolve
+    /// sem nenhuma linha vigente vira imposto 0 mudo — provavelmente seed/
+    /// configuração faltando para a UF/regime do tenant. Avisa em log com o
+    /// contexto completo em vez de deixar a NF sair "limpa" sem ninguém notar.
+    fn avisar_tributo_obrigatorio_ausente(
+        ctx: &ContextoFiscal,
+        aliquotas: &AliquotasItem,
+        ncm: &str,
+    ) {
+        let tenant = current_tenant_id().ok();
+        let uf = ctx.perfil.uf.as_str();
+        let regime = ctx.perfil.regime.as_str();
+        let avisar = |tributo: &str| {
+            tracing::warn!(
+                ?tenant,
+                uf,
+                regime,
+                ncm,
+                tributo,
+                "nenhuma alíquota vigente resolvida para tributo obrigatório na fase — imposto sairá 0"
+            );
+        };
+        // ICMS: obrigatório nas fases com legado, para os regimes normais
+        // (o Simples configurado não destaca; o fallback legado usa a linha de SP).
+        let regime_normal = matches!(
+            ctx.perfil.regime,
+            RegimeTributario::LucroPresumido | RegimeTributario::LucroReal
+        );
+        if ctx.fase.cobra_legado_estadual() && regime_normal && aliquotas.icms.is_none() {
+            avisar("icms");
+        }
+        // CBS/IBS: obrigatórios (ainda que informativos) nas fases que destacam.
+        if ctx.fase.destaca_ibs_cbs() {
+            if aliquotas.cbs.is_none() {
+                avisar("cbs");
+            }
+            if aliquotas.ibs_uf.is_none() {
+                avisar("ibs_uf");
+            }
+            if aliquotas.ibs_mun.is_none() {
+                avisar("ibs_mun");
+            }
+        }
+    }
+
     /// Alíquota efetiva (bps) que é CUSTO do vendedor para cada produto ativo,
     /// na fase vigente hoje e no perfil do tenant. Reusa o mesmo motor da
     /// emissão — a precificação assistida consome isto no lugar do imposto
@@ -299,18 +407,21 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             .await?
             .para_dominio()?
             .unwrap_or_else(PerfilFiscal::padrao_legado);
-        let data = chrono::Utc::now().date_naive();
+        let data = hoje_brasil();
         let ctx = ContextoFiscal {
             fase: FaseTransicao::de_data(data),
             perfil,
         };
         let informativo = ctx.perfil.ibs_cbs_informativo();
 
-        let produtos: Vec<(Uuid, String, Option<String>)> =
-            sqlx::query_as("SELECT produto_id, ncm, c_class_trib FROM proj_produtos WHERE ativo")
-                .fetch_all(self.repo.pool())
-                .await
-                .map_err(AppError::infra)?;
+        let produtos: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
+            "SELECT produto_id, ncm, c_class_trib FROM proj_produtos
+             WHERE ativo AND tenant_id = $1",
+        )
+        .bind(current_tenant_id()?)
+        .fetch_all(self.repo.pool())
+        .await
+        .map_err(AppError::infra)?;
 
         // Cache por (classe, ncm): produtos com mesma classe/NCM têm a mesma
         // alíquota efetiva — evita reresolver alíquotas por produto.

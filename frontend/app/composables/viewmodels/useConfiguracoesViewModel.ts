@@ -311,6 +311,8 @@ export function useConfiguracoesViewModel() {
     const perfilMunicipio = ref<string>('')
     const perfilCrt = ref<number | null>(null)
     const perfilIbsCbsRegular = ref(false)
+    /** Alíquota efetiva do DAS em % na tela (bps na API), só para o Simples. */
+    const perfilDasPct = ref<number | null>(null)
     const salvandoPerfilFiscal = ref(false)
 
     const regimesTributarios = [
@@ -336,6 +338,7 @@ export function useConfiguracoesViewModel() {
         perfilMunicipio.value = p.codigo_municipio ?? ''
         perfilCrt.value = p.crt
         perfilIbsCbsRegular.value = p.ibs_cbs_regime_regular
+        perfilDasPct.value = bpsParaPct(p.aliquota_das_bps)
     }
 
     async function salvarPerfilFiscal() {
@@ -347,6 +350,7 @@ export function useConfiguracoesViewModel() {
                 codigo_municipio: perfilMunicipio.value.trim() || null,
                 crt: perfilCrt.value,
                 ibs_cbs_regime_regular: perfilIbsCbsRegular.value,
+                aliquota_das_bps: pctParaBps(perfilDasPct.value),
             })
             notifySuccess('Salvo', 'Perfil fiscal atualizado.')
         } catch (e) {
@@ -423,6 +427,7 @@ export function useConfiguracoesViewModel() {
         perfilMunicipio,
         perfilCrt,
         perfilIbsCbsRegular,
+        perfilDasPct,
         salvandoPerfilFiscal,
         regimesTributarios,
         opcoesCrt,

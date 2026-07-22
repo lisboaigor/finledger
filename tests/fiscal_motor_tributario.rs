@@ -68,6 +68,78 @@ async fn seed_resolve_fases_da_transicao() -> TestResult {
     Ok(())
 }
 
+/// Seed da migração 016: PIS/COFINS por regime. Lucro real resolve as linhas
+/// não-cumulativas (165/760); lucro presumido segue em 65/300 (linha específica
+/// de mesmo valor); o fallback legado (Simples sem perfil) continua caindo nas
+/// linhas genéricas 65/300 — a resolução por especificidade decide.
+#[tokio::test]
+async fn regime_do_perfil_resolve_pis_cofins_especificos() -> TestResult {
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let provider = PostgresAliquotaProvider::new(pool.clone());
+    let classe = ClasseTributaria::padrao();
+
+    in_tenant(new_tenant_id(), async move {
+        let mut lucro_real = PerfilFiscal::padrao_legado();
+        lucro_real.regime = finledger::fiscal::domain::tributacao::RegimeTributario::LucroReal;
+        let r = provider
+            .resolver(dia(2026, 7, 21), &lucro_real, &classe, "84716053")
+            .await
+            .expect("resolver lucro real");
+        assert_eq!(r.pis.expect("pis").bps(), 165, "PIS não-cumulativo");
+        assert_eq!(r.cofins.expect("cofins").bps(), 760, "COFINS não-cumulativo");
+
+        let mut presumido = PerfilFiscal::padrao_legado();
+        presumido.regime =
+            finledger::fiscal::domain::tributacao::RegimeTributario::LucroPresumido;
+        let r = provider
+            .resolver(dia(2026, 7, 21), &presumido, &classe, "84716053")
+            .await
+            .expect("resolver lucro presumido");
+        assert_eq!(r.pis.expect("pis").bps(), 65);
+        assert_eq!(r.cofins.expect("cofins").bps(), 300);
+
+        // Fallback legado (Simples, sem linha específica de regime): as linhas
+        // genéricas continuam no caminho — trava do cliente sem perfil.
+        let legado = PerfilFiscal::padrao_legado();
+        let r = provider
+            .resolver(dia(2026, 7, 21), &legado, &classe, "84716053")
+            .await
+            .expect("resolver fallback legado");
+        assert_eq!(r.pis.expect("pis").bps(), 65);
+        assert_eq!(r.cofins.expect("cofins").bps(), 300);
+        assert_eq!(r.icms.expect("icms").bps(), 1800, "ICMS de SP intacto");
+    })
+    .await;
+    Ok(())
+}
+
+/// Seed da migração 016: ICMS interno modal por UF — um perfil em outra UF
+/// resolve a alíquota daquela UF, sem afetar SP.
+#[tokio::test]
+async fn icms_interno_por_uf_do_seed_016() -> TestResult {
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let provider = PostgresAliquotaProvider::new(pool.clone());
+    let classe = ClasseTributaria::padrao();
+
+    in_tenant(new_tenant_id(), async move {
+        let casos: &[(&str, i32)] = &[("RJ", 2200), ("MG", 1800), ("PI", 2250), ("SP", 1800)];
+        for &(uf, esperado) in casos {
+            let mut perfil = PerfilFiscal::padrao_legado();
+            perfil.uf = finledger::fiscal::domain::tributacao::Uf::try_from(uf.to_string())
+                .expect("UF válida");
+            let r = provider
+                .resolver(dia(2026, 7, 21), &perfil, &classe, "84716053")
+                .await
+                .expect("resolver UF");
+            assert_eq!(r.icms.expect("icms").bps(), esperado, "ICMS interno de {uf}");
+        }
+    })
+    .await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn linha_mais_especifica_vence_a_generica() -> TestResult {
     let (_c, pool) = start_postgres().await?;
@@ -291,6 +363,7 @@ async fn perfil_fiscal_incompleto_e_invalido_sao_rejeitados() -> TestResult {
             codigo_municipio: Some("3106200".into()),
             crt: Some(3),
             ibs_cbs_regime_regular: false,
+            aliquota_das_bps: None,
         };
         repo.atualizar_perfil_fiscal(valido).await.expect("perfil válido persiste");
         let lido = repo.obter_perfil_fiscal().await.expect("obter perfil");

@@ -512,6 +512,10 @@ fn financeiro_routes() -> ApiRouter {
             post(routes::financeiro::receber_pagamento),
         )
         .route(
+            "/financeiro/contas-receber/{id}/abatimento",
+            post(routes::financeiro::registrar_abatimento),
+        )
+        .route(
             "/financeiro/contas-receber/{id}/estornar",
             post(routes::financeiro::estornar_conta_receber),
         )

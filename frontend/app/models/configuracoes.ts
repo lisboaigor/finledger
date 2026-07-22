@@ -48,6 +48,9 @@ export interface PerfilFiscal {
     codigo_municipio: string | null
     crt: number | null
     ibs_cbs_regime_regular: boolean
+    /** Alíquota efetiva do DAS em bps (700 = 7%) — anexo/faixa do Simples;
+     * vira o custo tributário do vendedor quando o Simples está configurado. */
+    aliquota_das_bps: number | null
 }
 
 export function obterPerfilFiscal(apiFetch: ApiFetch) {

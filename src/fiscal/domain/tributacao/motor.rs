@@ -42,43 +42,89 @@ impl MotorTributario {
         classe: &ClasseTributariaInfo,
         base_centavos: i64,
     ) -> ImpostoItem {
+        // Simples Nacional CONFIGURADO sem regime regular: nada de legados no
+        // documento (CSOSN 102, recolhimento por dentro do DAS). O fallback
+        // sem perfil (`padrao_legado`) NÃO entra aqui de propósito — ele deve
+        // continuar emitindo os valores históricos do cliente em produção; o
+        // caminho correto é o tenant configurar o perfil fiscal.
+        let simples_por_dentro = ctx.perfil.simples_recolhe_por_dentro();
+
         let aplicar = |a: Option<Aliquota>| a.unwrap_or_else(Aliquota::zero).aplicar(base_centavos);
 
         // ICMS/ISS: integrais até 2028, reduzidos 2029–2032, extintos em 2033.
         let fator_legado = ctx.fase.fator_legado_bps();
         let legado = |a: Option<Aliquota>| {
-            if !ctx.fase.cobra_legado_estadual() {
+            if simples_por_dentro || !ctx.fase.cobra_legado_estadual() {
                 return 0;
             }
-            aplicar(a.map(|al| al.reduzida(10_000 - fator_legado)))
+            a.unwrap_or_else(Aliquota::zero)
+                .aplicar_reduzida(base_centavos, 10_000 - fator_legado)
         };
 
         // PIS/COFINS: extintos a partir de 2027. A vigência na tabela já
         // encerra em 2026-12-31, mas a fase é a fonte de verdade — cinto e
         // suspensório contra tabela mal semeada.
         let pis_cofins = |a: Option<Aliquota>| {
-            if ctx.fase.cobra_pis_cofins() { aplicar(a) } else { 0 }
-        };
-
-        // CBS/IBS: destacados a partir de 2026, com a redução de base da
-        // classe tributária do item (LC 214: redução 60%, alíquota zero, ...).
-        // No Simples sem opção pelo regime regular os valores são meramente
-        // informativos no documento — o montante calculado é o mesmo; o que
-        // muda é o recolhimento (via DAS), fora do escopo da NF.
-        let ibs_cbs = |a: Option<Aliquota>| {
-            if !ctx.fase.destaca_ibs_cbs() {
-                return 0;
+            if simples_por_dentro || !ctx.fase.cobra_pis_cofins() {
+                0
+            } else {
+                aplicar(a)
             }
-            aplicar(a.map(|al| al.reduzida(classe.reducao_bps)))
         };
 
-        // Imposto Seletivo: só existe a partir de 2027 (LC 214) e incide por
-        // NCM — a resolução por NCM já aconteceu no provider; a redução de
-        // classe NÃO se aplica a ele.
-        let is_seletivo = if matches!(ctx.fase, FaseTransicao::Legado | FaseTransicao::Teste2026) {
-            0
+        // CBS/IBS/IS. PREMISSA: o preço praticado é BRUTO — embute os tributos.
+        //
+        // - Até 2026 (e sempre que o destaque é informativo — Simples sem
+        //   regime regular, incluindo o fallback legado): CBS/IBS calculados
+        //   diretamente sobre o preço, como manda o ano-teste.
+        // - De 2027 em diante, para perfis que destacam de verdade: os
+        //   tributos são "por fora" da base, então a base é EXTRAÍDA por
+        //   dentro do preço, tal que base + IS(base) + CBS/IBS(base+IS) =
+        //   preço. O total da NF permanece = preço (retrocompatível).
+        let (cbs, ibs_uf, ibs_mun, is_seletivo) =
+            if ctx.fase.base_ibs_cbs_por_fora() && !ctx.perfil.ibs_cbs_informativo() {
+                Self::destacar_por_fora(aliquotas, classe, base_centavos)
+            } else {
+                let ibs_cbs = |a: Option<Aliquota>| {
+                    if !ctx.fase.destaca_ibs_cbs() {
+                        return 0;
+                    }
+                    a.unwrap_or_else(Aliquota::zero)
+                        .aplicar_reduzida(base_centavos, classe.reducao_bps)
+                };
+                // Imposto Seletivo: só existe a partir de 2027 (LC 214) e
+                // incide por NCM — a resolução por NCM já aconteceu no
+                // provider; a redução de classe NÃO se aplica a ele.
+                let is_seletivo =
+                    if matches!(ctx.fase, FaseTransicao::Legado | FaseTransicao::Teste2026) {
+                        0
+                    } else {
+                        aplicar(aliquotas.is_seletivo)
+                    };
+                (
+                    ibs_cbs(aliquotas.cbs),
+                    ibs_cbs(aliquotas.ibs_uf),
+                    ibs_cbs(aliquotas.ibs_mun),
+                    is_seletivo,
+                )
+            };
+
+        // Custo do DAS (Simples configurado): alíquota efetiva do anexo/faixa
+        // sobre o preço. Sem alíquota configurada o custo fica 0 — avisa em
+        // log em vez de falhar a emissão.
+        let das = if simples_por_dentro {
+            match ctx.perfil.aliquota_das_bps {
+                Some(a) => a.aplicar(base_centavos),
+                None => {
+                    tracing::warn!(
+                        "Simples Nacional configurado sem aliquota_das_bps: custo do DAS \
+                         considerado 0 — configure a alíquota efetiva do Simples no perfil fiscal"
+                    );
+                    0
+                }
+            }
         } else {
-            aplicar(aliquotas.is_seletivo)
+            0
         };
 
         ImpostoItem {
@@ -86,13 +132,77 @@ impl MotorTributario {
             iss_centavos: legado(aliquotas.iss),
             pis_centavos: pis_cofins(aliquotas.pis),
             cofins_centavos: pis_cofins(aliquotas.cofins),
-            cbs_centavos: ibs_cbs(aliquotas.cbs),
-            ibs_uf_centavos: ibs_cbs(aliquotas.ibs_uf),
-            ibs_mun_centavos: ibs_cbs(aliquotas.ibs_mun),
+            cbs_centavos: cbs,
+            ibs_uf_centavos: ibs_uf,
+            ibs_mun_centavos: ibs_mun,
             is_centavos: is_seletivo,
             c_class_trib: Some(classe.classe.as_str().to_string()),
             cst_ibs_cbs: Some(classe.cst_ibs_cbs.clone()),
+            csosn: simples_por_dentro.then(|| "102".to_string()),
+            das_centavos: das,
         }
+    }
+
+    /// Extrai a base "por dentro" do preço bruto e destaca IS/CBS/IBS sobre
+    /// ela (fases 2027+): com IS ad valorem `s` e soma efetiva de CBS+IBS `t`
+    /// (bps, já com a redução de classe), a base fecha em
+    /// `base = preço × 10⁸ / ((10⁴ + s) × (10⁴ + t))`, pois
+    /// base + IS(base) + (CBS+IBS)(base + IS) = preço. Para não perder
+    /// precisão da redução de classe, `t` é mantido escalado por 10⁴
+    /// (bps × bps). Tudo em i128 com arredondamento half-up; o resíduo de
+    /// arredondamento (≤ poucos centavos) vai para o maior tributo, de modo
+    /// que base + tributos = preço EXATO.
+    fn destacar_por_fora(
+        aliquotas: &AliquotasItem,
+        classe: &ClasseTributariaInfo,
+        preco_centavos: i64,
+    ) -> (i64, i64, i64, i64) {
+        let half_up = |numerador: i128, divisor: i128| -> i128 {
+            let q = (numerador.abs() + divisor / 2) / divisor;
+            if numerador < 0 { -q } else { q }
+        };
+
+        let reducao = classe.reducao_bps.clamp(0, 10_000);
+        // A redução de classe NÃO se aplica ao IS (LC 214).
+        let s = aliquotas.is_seletivo.map_or(0, |a| a.bps() as i128);
+        // Alíquota efetiva de cada CBS/IBS escalada por 10⁴: bps × (10⁴ − red).
+        let efetiva_e4 =
+            |a: Option<Aliquota>| a.map_or(0, |a| a.bps() as i128 * (10_000 - reducao) as i128);
+        let t_e4 = efetiva_e4(aliquotas.cbs)
+            + efetiva_e4(aliquotas.ibs_uf)
+            + efetiva_e4(aliquotas.ibs_mun);
+
+        // base = preço × 10¹² / ((10⁴ + s) × (10⁸ + t×10⁴)) — mesmo valor da
+        // fórmula acima, com t escalado.
+        let denominador = (10_000 + s) * (100_000_000 + t_e4);
+        let base = half_up(preco_centavos as i128 * 1_000_000_000_000, denominador) as i64;
+
+        let is_seletivo = half_up(base as i128 * s, 10_000) as i64;
+        let base_ibs_cbs = base + is_seletivo;
+        let destacar = |a: Option<Aliquota>| {
+            a.unwrap_or_else(Aliquota::zero)
+                .aplicar_reduzida(base_ibs_cbs, reducao)
+        };
+        let mut cbs = destacar(aliquotas.cbs);
+        let mut ibs_uf = destacar(aliquotas.ibs_uf);
+        let mut ibs_mun = destacar(aliquotas.ibs_mun);
+        let mut is_v = is_seletivo;
+
+        // Fechamento exato: o resíduo dos arredondamentos individuais vai para
+        // o maior tributo (nunca distorce mais que ±poucos centavos; se todos
+        // são zero o resíduo também é — base = preço quando não há tributo).
+        let residuo = preco_centavos - base - is_v - cbs - ibs_uf - ibs_mun;
+        if residuo != 0 {
+            let maior = [&mut cbs, &mut ibs_uf, &mut ibs_mun, &mut is_v]
+                .into_iter()
+                .max_by_key(|t| **t);
+            if let Some(maior) = maior
+                && *maior > 0
+            {
+                *maior += residuo;
+            }
+        }
+        (cbs, ibs_uf, ibs_mun, is_v)
     }
 }
 
@@ -278,6 +388,128 @@ mod tests {
         );
         assert_eq!(imposto.c_class_trib.as_deref(), Some("000001"));
         assert_eq!(imposto.cst_ibs_cbs.as_deref(), Some("000"));
+    }
+
+    /// Perfil que destaca CBS/IBS de verdade (não informativo): regime regular.
+    fn ctx_destaca(ano: i32) -> ContextoFiscal {
+        let mut c = ctx(ano);
+        c.perfil.ibs_cbs_regime_regular = true;
+        c
+    }
+
+    /// Base "por fora" (2027+, perfil que destaca): o preço é BRUTO e a base é
+    /// extraída por dentro — base + IS(base) + CBS/IBS(base+IS) = preço EXATO.
+    /// Valores esperados conferidos manualmente com a fórmula
+    /// base = preço × 10⁸ / ((10⁴+s) × (10⁴+t)).
+    #[test]
+    fn base_por_fora_fecha_exato_com_o_preco() {
+        // (nome, ano, is_bps, reducao_bps, esperado (base, is, cbs, ibs_uf, ibs_mun))
+        type CasoBaseForaFora = (&'static str, i32, i32, i32, (i64, i64, i64, i64, i64));
+        let casos: &[CasoBaseForaFora] = &[
+            // 2027: t = 880+5+5 = 890 bps → base = 100000/1,089 = 91.827.
+            ("2027 sem IS", 2027, 0, 0, (91_827, 0, 8_081, 46, 46)),
+            // 2033: t = 880+1400+350 = 2630 bps → base 79.177; resíduo −1 no maior (ibs_uf).
+            ("2033 sem IS", 2033, 0, 0, (79_177, 0, 6_968, 11_084, 2_771)),
+            // 2033 com IS 25%: base 63.341; IS 15.835 + resíduo +1 → 15.836.
+            ("2033 com IS", 2033, 2500, 0, (63_341, 15_836, 6_967, 11_085, 2_771)),
+            // 2033 com redução de classe 60%: t efetivo 1052 bps → base 90.481.
+            ("2033 reduzido", 2033, 0, 6000, (90_481, 0, 3_185, 5_067, 1_267)),
+        ];
+        for &(nome, ano, is_bps, reducao_bps, (base, is_v, cbs, ibs_uf, ibs_mun)) in casos {
+            let classe = ClasseTributariaInfo {
+                reducao_bps,
+                ..ClasseTributariaInfo::integral()
+            };
+            let mut aliquotas = aliquotas_para(ano);
+            if is_bps > 0 {
+                aliquotas.is_seletivo = bps(is_bps);
+            }
+            let imposto =
+                MotorTributario::calcular_item(&ctx_destaca(ano), &aliquotas, &classe, BASE);
+            assert_eq!(imposto.is_centavos, is_v, "IS {nome}");
+            assert_eq!(imposto.cbs_centavos, cbs, "CBS {nome}");
+            assert_eq!(imposto.ibs_uf_centavos, ibs_uf, "IBS UF {nome}");
+            assert_eq!(imposto.ibs_mun_centavos, ibs_mun, "IBS mun {nome}");
+            // Fechamento exato: base + tributos por fora = preço bruto.
+            let soma = base
+                + imposto.is_centavos
+                + imposto.cbs_centavos
+                + imposto.ibs_uf_centavos
+                + imposto.ibs_mun_centavos;
+            assert_eq!(soma, BASE, "base + tributos deve fechar no preço ({nome})");
+        }
+    }
+
+    /// Em 2027–2032 o ICMS continua incidindo "por dentro" do preço bruto —
+    /// a extração da base vale só para IS/CBS/IBS.
+    #[test]
+    fn base_por_fora_nao_afeta_o_icms() {
+        let imposto = MotorTributario::calcular_item(
+            &ctx_destaca(2027),
+            &aliquotas_para(2027),
+            &ClasseTributariaInfo::integral(),
+            BASE,
+        );
+        assert_eq!(imposto.icms_centavos, 18_000, "ICMS sobre o preço bruto");
+    }
+
+    /// Perfil informativo (Simples sem regime regular, incluindo o fallback
+    /// legado) NÃO extrai base por fora em 2027+: CBS/IBS seguem calculados
+    /// sobre o preço, como hoje — o fallback do cliente em produção não muda.
+    #[test]
+    fn perfil_informativo_nao_extrai_base_por_fora() {
+        let imposto = MotorTributario::calcular_item(
+            &ctx(2027), // padrao_legado → informativo
+            &aliquotas_para(2027),
+            &ClasseTributariaInfo::integral(),
+            BASE,
+        );
+        assert_eq!(imposto.cbs_centavos, 8_800, "CBS informativa sobre o preço");
+        assert_eq!(imposto.ibs_uf_centavos, 50);
+    }
+
+    /// Simples Nacional CONFIGURADO sem regime regular: legados não são
+    /// destacados (CSOSN 102), CBS/IBS informativos de 2026 permanecem e o
+    /// custo do vendedor é o DAS.
+    #[test]
+    fn simples_configurado_zera_legados_e_usa_das() {
+        let mut ctx = ctx(2026);
+        ctx.perfil.configurado = true;
+        ctx.perfil.aliquota_das_bps = Some(Aliquota::try_from(700).expect("7%"));
+        let imposto = MotorTributario::calcular_item(
+            &ctx,
+            &aliquotas_para(2026),
+            &ClasseTributariaInfo::integral(),
+            BASE,
+        );
+        assert_eq!(imposto.icms_centavos, 0, "Simples não destaca ICMS");
+        assert_eq!(imposto.pis_centavos, 0);
+        assert_eq!(imposto.cofins_centavos, 0);
+        assert_eq!(imposto.cbs_centavos, 900, "CBS informativa de 2026 permanece");
+        assert_eq!(imposto.csosn.as_deref(), Some("102"));
+        assert_eq!(imposto.das_centavos, 7_000, "DAS 7% sobre a base");
+        assert_eq!(
+            imposto.custo_vendedor_centavos(true),
+            7_000,
+            "custo do vendedor = DAS (IBS/CBS informativos ficam fora)"
+        );
+    }
+
+    /// Simples configurado SEM alíquota do DAS: legados continuam zerados e o
+    /// custo cai para 0 (com aviso em log) — nunca um erro de emissão.
+    #[test]
+    fn simples_configurado_sem_das_tem_custo_zero() {
+        let mut ctx = ctx(2026);
+        ctx.perfil.configurado = true;
+        let imposto = MotorTributario::calcular_item(
+            &ctx,
+            &aliquotas_para(2026),
+            &ClasseTributariaInfo::integral(),
+            BASE,
+        );
+        assert_eq!(imposto.icms_centavos, 0);
+        assert_eq!(imposto.das_centavos, 0);
+        assert_eq!(imposto.custo_vendedor_centavos(true), 0);
     }
 
     /// Trava de regressão do comportamento legado: mesmas alíquotas do antigo

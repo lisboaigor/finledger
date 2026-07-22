@@ -58,6 +58,14 @@ pub struct ImpostoItem {
     pub c_class_trib: Option<String>,
     #[serde(default)]
     pub cst_ibs_cbs: Option<String>,
+    /// CSOSN (Simples Nacional): "102" quando o perfil configurado é Simples
+    /// sem opção pelo regime regular — a NF não destaca ICMS/PIS/COFINS/ISS.
+    #[serde(default)]
+    pub csosn: Option<String>,
+    /// Custo do DAS (alíquota efetiva do Simples × base) — NÃO é destacado na
+    /// NF; entra apenas no custo tributário do vendedor (precificação/BI).
+    #[serde(default)]
+    pub das_centavos: i64,
 }
 
 impl ImpostoItem {
@@ -75,15 +83,19 @@ impl ImpostoItem {
         }
     }
 
-    /// Soma dos tributos que são custo efetivo do vendedor. ICMS/ISS/PIS/COFINS
-    /// e o Imposto Seletivo sempre entram; IBS/CBS destacados só contam quando
-    /// NÃO são informativos — no Simples Nacional sem opção pelo regime regular
-    /// eles são recolhidos por dentro do DAS (LC 214/2025, art. 41) e não
-    /// incrementam o custo por fora. Fonte única reusada por precificação, BI e
-    /// projeção (evita duplicar a regra em TS/SQL).
+    /// Soma dos tributos que são custo efetivo do vendedor. ICMS/ISS/PIS/COFINS,
+    /// o Imposto Seletivo e o DAS (Simples configurado) sempre entram; IBS/CBS
+    /// destacados só contam quando NÃO são informativos — no Simples Nacional
+    /// sem opção pelo regime regular eles são recolhidos por dentro do DAS
+    /// (LC 214/2025, art. 41) e não incrementam o custo por fora. Fonte única
+    /// reusada por precificação, BI e projeção (evita duplicar a regra em TS/SQL).
     pub fn custo_vendedor_centavos(&self, ibs_cbs_informativo: bool) -> i64 {
-        let legado_e_seletivo =
-            self.icms_centavos + self.iss_centavos + self.pis_centavos + self.cofins_centavos + self.is_centavos;
+        let legado_e_seletivo = self.icms_centavos
+            + self.iss_centavos
+            + self.pis_centavos
+            + self.cofins_centavos
+            + self.is_centavos
+            + self.das_centavos;
         if ibs_cbs_informativo {
             legado_e_seletivo
         } else {

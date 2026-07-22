@@ -52,6 +52,15 @@ impl FaseTransicao {
         !matches!(self, Self::Legado)
     }
 
+    /// CBS/IBS/IS são cobrados "por fora" nesta fase? A partir de 2027 o preço
+    /// praticado continua BRUTO (embute os tributos), então a base de cálculo
+    /// precisa ser extraída "por dentro" do preço — só para perfis que
+    /// efetivamente destacam CBS/IBS (regime regular ou regimes normais).
+    /// Em 2026 (ano-teste) o destaque é informativo sobre o preço e nada muda.
+    pub fn base_ibs_cbs_por_fora(&self) -> bool {
+        !matches!(self, Self::Legado | Self::Teste2026)
+    }
+
     /// Fator (em bps de 10000) aplicado sobre o ICMS/ISS cheio.
     pub fn fator_legado_bps(&self) -> i32 {
         match self {

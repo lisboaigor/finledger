@@ -1,6 +1,8 @@
 use pharos_core::{DomainError, DomainResult};
 use serde::{Deserialize, Serialize};
 
+use super::aliquota::Aliquota;
+
 /// Regime tributário do tenant (art. 146 CF + LC 123/2006 / LC 214/2025).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,12 +129,28 @@ pub struct PerfilFiscal {
     /// art. 41) para gerar crédito aos clientes; `false` = recolhe por dentro
     /// do DAS e os valores de IBS/CBS na NF são informativos.
     pub ibs_cbs_regime_regular: bool,
+    /// Alíquota efetiva do DAS (anexo/faixa do Simples), custo tributário do
+    /// vendedor quando o regime é Simples Nacional CONFIGURADO. `None` = não
+    /// informada → custo 0 (com aviso em log no motor).
+    #[serde(default)]
+    pub aliquota_das_bps: Option<Aliquota>,
+    /// Perfil vindo de configuração explícita do tenant (`true`) ou do fallback
+    /// legado (`false`, `padrao_legado`)? O fallback precisa continuar emitindo
+    /// EXATAMENTE os valores históricos (cliente em produção sem perfil);
+    /// o tratamento correto do Simples (sem destaque de legados, CSOSN, DAS)
+    /// só se aplica a perfil configurado.
+    #[serde(default)]
+    pub configurado: bool,
 }
 
 impl PerfilFiscal {
     /// Comportamento histórico do sistema para tenants que ainda não
     /// configuraram o perfil: Simples Nacional em São Paulo/SP, CRT 1.
-    /// Mantém as notas do cliente em produção idênticas às de antes do motor.
+    /// Mantém as notas do cliente em produção idênticas às de antes do motor —
+    /// inclusive o destaque (tecnicamente indevido no Simples) de ICMS/PIS/
+    /// COFINS. NÃO "corrigir" este fallback: o caminho certo é o tenant
+    /// configurar o perfil fiscal em Configurações, quando então o tratamento
+    /// correto do Simples (CSOSN, sem legados, DAS como custo) passa a valer.
     pub fn padrao_legado() -> Self {
         Self {
             regime: RegimeTributario::SimplesNacional,
@@ -140,6 +158,8 @@ impl PerfilFiscal {
             codigo_municipio: CodigoMunicipio("3550308".into()),
             crt: Crt(1),
             ibs_cbs_regime_regular: false,
+            aliquota_das_bps: None,
+            configurado: false,
         }
     }
 
@@ -149,6 +169,17 @@ impl PerfilFiscal {
     /// (LC 214/2025, art. 41). Demais regimes recolhem por fora → não informativo.
     pub fn ibs_cbs_informativo(&self) -> bool {
         self.regime == RegimeTributario::SimplesNacional && !self.ibs_cbs_regime_regular
+    }
+
+    /// Simples Nacional CONFIGURADO sem opção pelo regime regular: a NF não
+    /// destaca ICMS/PIS/COFINS/ISS (CSOSN 102, recolhimento por dentro do DAS)
+    /// e o custo tributário do vendedor é a alíquota efetiva do DAS. O fallback
+    /// legado (perfil não configurado) fica de fora de propósito — ver
+    /// `padrao_legado`.
+    pub fn simples_recolhe_por_dentro(&self) -> bool {
+        self.configurado
+            && self.regime == RegimeTributario::SimplesNacional
+            && !self.ibs_cbs_regime_regular
     }
 }
 

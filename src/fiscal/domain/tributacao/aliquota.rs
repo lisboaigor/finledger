@@ -47,18 +47,27 @@ impl Aliquota {
         self.0
     }
 
-    /// Aplica a alíquota sobre uma base em centavos, arredondamento half-up.
+    /// Aplica a alíquota sobre uma base em centavos, arredondamento half-up
+    /// SIMÉTRICO (o valor absoluto é arredondado e o sinal reposto — estornos/
+    /// devoluções espelham exatamente o documento original).
     /// i128 no intermediário para nunca estourar (base máx. i64 × 10⁴ bps).
     pub fn aplicar(&self, base_centavos: i64) -> i64 {
-        let produto = base_centavos as i128 * self.0 as i128;
-        ((produto + 5_000) / 10_000) as i64
+        Self::half_up(base_centavos as i128 * self.0 as i128, 10_000)
     }
 
-    /// Reduz a alíquota por um fator em bps (ex.: redução de 60% da LC 214 →
-    /// `reducao_bps = 6000`; fator de transição do ICMS 2029–2032 → 9000..6000).
-    pub fn reduzida(&self, reducao_bps: i32) -> Self {
-        let restante = (10_000 - reducao_bps).clamp(0, 10_000);
-        Self(((self.0 as i64 * restante as i64) / 10_000) as i32)
+    /// Aplica a alíquota já com uma redução em bps (ex.: redução de 60% da
+    /// LC 214 → `reducao_bps = 6000`; phase-down do ICMS 2029–2032 →
+    /// 1000..4000) em um ÚNICO arredondamento half-up sobre o valor final —
+    /// nada de truncar a alíquota reduzida antes de aplicar (issue #17).
+    pub fn aplicar_reduzida(&self, base_centavos: i64, reducao_bps: i32) -> i64 {
+        let restante = (10_000 - reducao_bps).clamp(0, 10_000) as i128;
+        Self::half_up(base_centavos as i128 * self.0 as i128 * restante, 100_000_000)
+    }
+
+    /// Divisão half-up simétrica: arredonda o valor absoluto e repõe o sinal.
+    fn half_up(numerador: i128, divisor: i128) -> i64 {
+        let quociente = (numerador.abs() + divisor / 2) / divisor;
+        (if numerador < 0 { -quociente } else { quociente }) as i64
     }
 }
 
@@ -94,11 +103,17 @@ mod tests {
     }
 
     #[test]
-    fn reduzida_aplica_fator() {
+    fn aplicar_reduzida_arredonda_uma_unica_vez() {
         let cheia = Aliquota::try_from(1800).expect("18%");
-        assert_eq!(cheia.reduzida(0).bps(), 1800);
-        assert_eq!(cheia.reduzida(6000).bps(), 720); // redução de 60%
-        assert_eq!(cheia.reduzida(10_000).bps(), 0); // alíquota zero
+        assert_eq!(cheia.aplicar_reduzida(10_000, 0), 1_800); // sem redução = aplicar
+        assert_eq!(cheia.aplicar_reduzida(10_000, 6000), 720); // 18% × 40% = 7,2%
+        assert_eq!(cheia.aplicar_reduzida(10_000, 10_000), 0); // alíquota zero
+
+        // O ganho da semântica nova: 7 bps com redução de 50% = 3,5 bps
+        // efetivos. Truncar a alíquota antes (3 bps) daria 3 centavos em
+        // R$ 100,00; o arredondamento único sobre o valor dá 3,5 → 4.
+        let fina = Aliquota::try_from(7).expect("bps");
+        assert_eq!(fina.aplicar_reduzida(10_000, 5_000), 4);
     }
 
     #[test]
@@ -112,17 +127,19 @@ mod tests {
     fn aplicar_base_zero_e_negativa() {
         let a = Aliquota::try_from(1800).expect("18%");
         assert_eq!(a.aplicar(0), 0);
-        // Base negativa (estorno/devolução): resultado proporcional negativo,
-        // sem estourar nem inverter sinal.
-        assert_eq!(a.aplicar(-10_000), -1_799); // -1800 + half-up de +5000/10000
+        // Base negativa (estorno/devolução): half-up SIMÉTRICO — o espelho
+        // exato do valor positivo, sem viés de arredondamento por sinal.
+        assert_eq!(a.aplicar(-10_000), -1_800);
+        // 0,65% de −R$ 1,00 = −0,65 centavo → arredonda para −1 (espelho do +1).
+        assert_eq!(Aliquota::try_from(65).expect("bps").aplicar(-100), -1);
     }
 
     #[test]
-    fn reduzida_clampa_fora_da_faixa() {
+    fn aplicar_reduzida_clampa_fora_da_faixa() {
         let cheia = Aliquota::try_from(1800).expect("18%");
         // Redução acima de 100% não pode inverter o sinal da alíquota.
-        assert_eq!(cheia.reduzida(15_000).bps(), 0);
+        assert_eq!(cheia.aplicar_reduzida(10_000, 15_000), 0);
         // Redução negativa (dado corrompido) não pode aumentar a alíquota.
-        assert_eq!(cheia.reduzida(-5_000).bps(), 1800);
+        assert_eq!(cheia.aplicar_reduzida(10_000, -5_000), 1_800);
     }
 }

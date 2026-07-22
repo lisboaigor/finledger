@@ -223,6 +223,24 @@ onMounted(vm.carregar)
                     </div>
                 </div>
 
+                <div v-if="vm.perfilRegime === 'simples_nacional'" class="flex flex-col gap-2">
+                    <label for="das-pct" class="text-sm font-medium">Alíquota efetiva do DAS (%)</label>
+                    <InputPercent
+                        id="das-pct"
+                        v-model="vm.perfilDasPct"
+                        :min="0"
+                        :max="30"
+                        :max-fraction-digits="2"
+                        :disabled="!vm.isAdmin"
+                        class="w-full sm:w-48"
+                    />
+                    <small class="text-muted-foreground">
+                        Alíquota efetiva do seu anexo/faixa do Simples. Vira o custo tributário
+                        usado na precificação — no Simples a nota não destaca ICMS/PIS/COFINS,
+                        o recolhimento acontece dentro do DAS.
+                    </small>
+                </div>
+
                 <div class="flex items-start gap-3">
                     <Checkbox id="ibs-cbs-regular" v-model="vm.perfilIbsCbsRegular" :disabled="!vm.isAdmin" />
                     <label for="ibs-cbs-regular" class="text-sm" :class="{ 'cursor-pointer': vm.isAdmin }">

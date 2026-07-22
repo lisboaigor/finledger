@@ -211,11 +211,13 @@ struct ImpostosEsperados {
 
 fn impostos_esperados_hoje(base: i64, reducao_bps: i64) -> ImpostosEsperados {
     use chrono::Datelike;
-    let ano = chrono::Utc::now().year();
+    // Mesma referência de "hoje" do handler: dia fiscal em America/Sao_Paulo.
+    let ano = finledger::fiscal::domain::tributacao::hoje_brasil().year();
 
     let aplicar = |bps: i64| (base * bps + 5_000) / 10_000;
-    // Redução de classe (LC 214) só sobre CBS/IBS.
-    let aplicar_reduzido = |bps: i64| aplicar(bps * (10_000 - reducao_bps) / 10_000);
+    // Redução de classe (LC 214) só sobre CBS/IBS — arredondamento ÚNICO
+    // half-up sobre o valor final (issue #17), não truncando a alíquota antes.
+    let aplicar_reduzido = |bps: i64| (base * bps * (10_000 - reducao_bps) + 50_000_000) / 100_000_000;
     // Phase-down constitucional do ICMS: 100% até 2028, 90..60% em 2029-2032, 0 em 2033+.
     let fator_icms = match ano {
         ..=2028 => 10_000,
@@ -574,6 +576,260 @@ async fn nf_com_perfil_e_classe_de_reducao_aplica_reducao_no_ibs_cbs() -> TestRe
     assert!(cbs < integral.cbs, "redução deve diminuir a CBS");
     Ok(())
 }
+/// NF rejeitada pela SEFAZ pode ser retransmitida (issue #9): após a correção
+/// da causa, o comando Retransmitir leva a nota de `rejeitada` a `autorizada`.
+#[tokio::test]
+async fn nf_rejeitada_pode_ser_retransmitida_e_autorizada() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    use finledger::projections::fiscal::FiscalProjection;
+    let bus = EventBus::new();
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal_rejeita = FiscalHandlers::new(
+        Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
+        Arc::new(SefazQueRejeita),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus.clone(),
+    );
+    // Mesma fiação, agora com a SEFAZ saudável (a "correção" aconteceu).
+    let fiscal_ok = montar_fiscal(&pool, bus);
+
+    let tenant_id = new_tenant_id();
+    let venda_id = Uuid::new_v4();
+    let item = item_teste(Uuid::new_v4(), 5000);
+
+    in_tenant(tenant_id, async move {
+        fiscal_rejeita
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
+            .await
+            .expect("emissão com rejeição não é erro do fluxo");
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let nf_id: Uuid = sqlx::query_scalar(
+            "SELECT nf_id FROM proj_notas_fiscais WHERE venda_id = $1 AND status = 'rejeitada'",
+        )
+        .bind(venda_id)
+        .fetch_one(&pool)
+        .await
+        .expect("NF rejeitada projetada");
+
+        fiscal_ok
+            .handle(finledger::fiscal::application::commands::RetransmitirNotaFiscal { nf_id })
+            .await
+            .expect("retransmitir NF rejeitada");
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM proj_notas_fiscais WHERE nf_id = $1")
+                .bind(nf_id)
+                .fetch_one(&pool)
+                .await
+                .expect("status da NF");
+        assert_eq!(status, "autorizada", "retransmissão deve autorizar a NF");
+    })
+    .await;
+    Ok(())
+}
+
+/// Simples Nacional CONFIGURADO (issue #4): a NF não destaca ICMS/PIS/COFINS
+/// (CSOSN 102), CBS/IBS informativos permanecem e o custo tributário do
+/// vendedor passa a ser a alíquota efetiva do DAS.
+#[tokio::test]
+async fn simples_configurado_emite_sem_legados_com_csosn_e_das() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let tenant_id = create_tenant(&pool, "simples-conf").await?;
+    sqlx::query(
+        "UPDATE tenants SET regime_tributario = 'simples_nacional', uf = 'SP',
+                codigo_municipio = '3550308', crt = 1, ibs_cbs_regime_regular = FALSE,
+                aliquota_das_bps = 700 WHERE tenant_id = $1",
+    )
+    .bind(tenant_id)
+    .execute(&pool)
+    .await?;
+
+    use finledger::projections::fiscal::FiscalProjection;
+    let bus = EventBus::new();
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = montar_fiscal(&pool, bus);
+
+    let venda_id = Uuid::new_v4();
+    let produto_id = Uuid::new_v4();
+    helpers::seed_produto(&pool, tenant_id, produto_id, "SKU-DAS", 100_000).await?;
+
+    use finledger::fiscal::domain::nota_fiscal::NotaFiscalId;
+    use pharos_core::Repository;
+    let repo = Arc::new(PostgresNotaFiscalRepository::new(pool.clone()));
+
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item_teste(produto_id, 100_000)], 0)
+            .await
+            .expect("gerar e transmitir falhou");
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let (icms, pis, cofins, cbs): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT icms_centavos, pis_centavos, cofins_centavos, cbs_centavos
+             FROM proj_notas_fiscais WHERE venda_id = $1",
+        )
+        .bind(venda_id)
+        .fetch_one(&pool)
+        .await
+        .expect("NF projetada");
+
+        assert_eq!(icms, 0, "Simples configurado não destaca ICMS");
+        assert_eq!(pis, 0, "Simples configurado não destaca PIS");
+        assert_eq!(cofins, 0, "Simples configurado não destaca COFINS");
+        let e = impostos_esperados_hoje(100_000, 0);
+        assert_eq!(cbs, e.cbs, "CBS informativa permanece");
+
+        // CSOSN e DAS congelados no agregado (itens da NF).
+        let nf_id: Uuid =
+            sqlx::query_scalar("SELECT nf_id FROM proj_notas_fiscais WHERE venda_id = $1")
+                .bind(venda_id)
+                .fetch_one(&pool)
+                .await
+                .expect("nf_id");
+        let nf = repo
+            .find_by_id(&NotaFiscalId::from(nf_id))
+            .await
+            .expect("buscar NF")
+            .expect("NF existe");
+        let imposto = &nf.itens[0].imposto;
+        assert_eq!(imposto.csosn.as_deref(), Some("102"));
+        assert_eq!(imposto.das_centavos, 7_000, "DAS 7% sobre R$ 1.000,00");
+
+        // Precificação: alíquota efetiva do produto = alíquota do DAS.
+        let efetivas = fiscal
+            .listar_aliquota_efetiva_produtos()
+            .await
+            .expect("aliquotas efetivas");
+        let efetiva = efetivas
+            .iter()
+            .find(|p| p.produto_id == produto_id)
+            .expect("produto na lista");
+        assert_eq!(efetiva.imposto_efetivo_bps, 700, "custo do vendedor = DAS");
+    })
+    .await;
+    Ok(())
+}
+
+/// Numeração sequencial por tenant (issue #16): números 1, 2, 3 na ordem de
+/// emissão, e cada tenant tem a própria sequência (isolamento).
+#[tokio::test]
+async fn numeracao_de_nf_e_sequencial_e_isolada_por_tenant() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    use finledger::projections::fiscal::FiscalProjection;
+    let bus = EventBus::new();
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = Arc::new(montar_fiscal(&pool, bus));
+
+    let tenant_a = new_tenant_id();
+    let tenant_b = new_tenant_id();
+
+    let mut vendas_a = Vec::new();
+    for _ in 0..3 {
+        let venda_id = Uuid::new_v4();
+        vendas_a.push(venda_id);
+        let f = Arc::clone(&fiscal);
+        let item = item_teste(Uuid::new_v4(), 5000);
+        in_tenant(tenant_a, async move {
+            f.gerar_e_transmitir(venda_id, None, &[item], 0)
+                .await
+                .expect("emissão tenant A");
+        })
+        .await;
+    }
+    let venda_b = Uuid::new_v4();
+    {
+        let f = Arc::clone(&fiscal);
+        let item = item_teste(Uuid::new_v4(), 5000);
+        in_tenant(tenant_b, async move {
+            f.gerar_e_transmitir(venda_b, None, &[item], 0)
+                .await
+                .expect("emissão tenant B");
+        })
+        .await;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    for (idx, venda_id) in vendas_a.iter().enumerate() {
+        let numero: i32 = sqlx::query_scalar(
+            "SELECT numero FROM proj_notas_fiscais WHERE venda_id = $1 AND tenant_id = $2",
+        )
+        .bind(venda_id)
+        .bind(tenant_a)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(numero as usize, idx + 1, "sequência 1,2,3 no tenant A");
+    }
+    let numero_b: i32 = sqlx::query_scalar(
+        "SELECT numero FROM proj_notas_fiscais WHERE venda_id = $1 AND tenant_id = $2",
+    )
+    .bind(venda_b)
+    .bind(tenant_b)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(numero_b, 1, "tenant B começa a própria sequência do 1");
+    Ok(())
+}
+
+/// Devolução sobre NF presa em `transmitida` (issue #9): em vez de ficar
+/// invisível (só 'autorizada' era buscada), a nota é marcada com cancelamento
+/// pendente.
+#[tokio::test]
+async fn devolucao_sobre_nf_presa_em_transmitida_marca_cancelamento_pendente() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    use finledger::projections::fiscal::FiscalProjection;
+    let bus = EventBus::new();
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = FiscalHandlers::new(
+        Arc::new(PostgresNotaFiscalRepository::new(pool.clone())),
+        Arc::new(SefazIndisponivel),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
+
+    let tenant_id = new_tenant_id();
+    let venda_id = Uuid::new_v4();
+    let item = item_teste(Uuid::new_v4(), 5000);
+    in_tenant(tenant_id, async move {
+        fiscal
+            .gerar_e_transmitir(venda_id, None, &[item], 0)
+            .await
+            .expect("emissão com SEFAZ fora não derruba o fluxo");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        fiscal
+            .processar_devolucao(venda_id, None, &[], true, "cliente desistiu")
+            .await
+            .expect("devolução sobre NF transmitida");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let (status, pendente): (String, bool) = sqlx::query_as(
+            "SELECT status, cancelamento_pendente FROM proj_notas_fiscais WHERE venda_id = $1",
+        )
+        .bind(venda_id)
+        .fetch_one(&pool)
+        .await
+        .expect("NF projetada");
+        assert_eq!(status, "transmitida");
+        assert!(pendente, "NF presa deve ficar com cancelamento pendente");
+    })
+    .await;
+    Ok(())
+}
+
 /// Desconto global da venda destacado na NF: o total sai líquido (produtos −
 /// desconto) e a base de cálculo de cada item é o subtotal menos a quota do
 /// desconto rateada proporcionalmente (sobra de arredondamento no último item).

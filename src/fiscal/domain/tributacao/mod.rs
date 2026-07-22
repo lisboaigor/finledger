@@ -13,6 +13,15 @@ pub mod motor;
 pub mod perfil_fiscal;
 
 pub use aliquota::{Aliquota, TributoTipo};
+
+/// Data de "hoje" no fuso oficial das obrigações fiscais (America/Sao_Paulo).
+/// `Utc::now().date_naive()` viraria o dia às 21h no Brasil — NF emitida à
+/// noite sairia com a data (e a fase da transição, na virada de ano!) erradas.
+pub fn hoje_brasil() -> chrono::NaiveDate {
+    chrono::Utc::now()
+        .with_timezone(&chrono_tz::America::Sao_Paulo)
+        .date_naive()
+}
 pub use classe_tributaria::{ClasseTributaria, ClasseTributariaInfo};
 pub use fase_transicao::FaseTransicao;
 pub use motor::{AliquotasItem, ContextoFiscal, MotorTributario};
