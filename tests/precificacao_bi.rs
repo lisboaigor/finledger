@@ -13,7 +13,8 @@ use finledger::catalogo::application::commands::CadastrarProduto;
 use finledger::estoque::application::commands::RegistrarEntradaEstoque;
 use finledger::tenants::repository::ConfigPrecificacao;
 use finledger::vendas::application::commands::{
-    AdicionarItemVenda, ConfirmarVenda, DefinirFormaPagamento, IniciarVenda,
+    AdicionarItemVenda, ConfirmarVenda, DefinirFormaPagamento, DevolucaoItem, DevolverItensVenda,
+    IniciarVenda,
 };
 use finledger::vendas::domain::value_objects::FormaPagamento;
 use uuid::Uuid;
@@ -413,6 +414,154 @@ async fn score_saude_compoe_metricas_do_tenant() -> TestResult {
             .map(|c| c["nome"].as_str().unwrap().to_string())
             .collect();
         assert!(nomes.contains(&"Rumo à meta do mês".to_string()));
+    })
+    .await;
+    Ok(())
+}
+
+/// Devolução parcial não reescreve o mês da venda: o fato da venda continua
+/// BRUTO (estável) e a devolução vira um fato NEGATIVO datado no período em que
+/// ocorreu. A soma (bruto + negativo) dá o líquido.
+#[tokio::test]
+async fn devolucao_parcial_gera_fato_negativo_datado_e_mantem_venda_bruta() -> TestResult {
+    let (_c, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    setup_bi(&pool).await?;
+    let tenant_id = create_tenant(&pool, "devol").await?;
+    let app = montar_app(&pool);
+    let pool2 = pool.clone();
+
+    in_tenant(tenant_id, async move {
+        let produto_id = dispatch(
+            &*app.catalogo,
+            CadastrarProduto {
+                sku: "DEV-1".into(),
+                descricao: "Correia".into(),
+                ncm: "40103100".into(),
+                unidade: "UN".into(),
+                preco_custo_centavos: 1_000,
+                preco_venda_centavos: 2_000,
+                categoria: "Correias".into(),
+                marca: None,
+                controla_estoque: true,
+                classe_trib: None,
+            },
+        )
+        .await
+        .expect("produto");
+        dispatch(
+            &*app.estoque,
+            RegistrarEntradaEstoque {
+                produto_id: produto_id.as_uuid(),
+                quantidade: 10,
+                custo_unitario_centavos: 1_000,
+                motivo: "estoque".into(),
+                nota_fiscal: None,
+            },
+        )
+        .await
+        .expect("entrada");
+
+        // Venda de 5 unidades.
+        let venda_id = dispatch(
+            &*app.vendas,
+            IniciarVenda { vendedor_id: Uuid::new_v4(), cliente_id: None },
+        )
+        .await
+        .expect("iniciar");
+        dispatch(
+            &*app.vendas,
+            AdicionarItemVenda {
+                venda_id: venda_id.as_uuid(),
+                produto_id: produto_id.as_uuid(),
+                sku: "DEV-1".into(),
+                descricao: "Correia".into(),
+                quantidade: 5,
+                preco_unitario_centavos: 2_000,
+                vender_sem_estoque: false,
+                preservar_preco_informado: false,
+            },
+        )
+        .await
+        .expect("item");
+        dispatch(
+            &*app.vendas,
+            DefinirFormaPagamento {
+                venda_id: venda_id.as_uuid(),
+                forma: FormaPagamento::Dinheiro,
+            },
+        )
+        .await
+        .expect("pagamento");
+        dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
+            .await
+            .expect("confirmar");
+        aguardar_projecoes().await;
+
+        let item_id: Uuid =
+            sqlx::query_scalar("SELECT item_id FROM proj_vendas_itens WHERE venda_id = $1")
+                .bind(venda_id.as_uuid())
+                .fetch_one(&pool2)
+                .await
+                .expect("item_id");
+
+        // Devolve 2 das 5 unidades (parcial).
+        dispatch(
+            &*app.vendas,
+            DevolverItensVenda {
+                venda_id: venda_id.as_uuid(),
+                itens: vec![DevolucaoItem { item_id, quantidade: 2 }],
+                motivo: "sobra".into(),
+            },
+        )
+        .await
+        .expect("devolver");
+        aguardar_projecoes().await;
+
+        let _: serde_json::Value = sqlx::query_scalar("SELECT bi.executar_etl()")
+            .fetch_one(&pool2)
+            .await
+            .expect("etl");
+
+        // Fato da venda permanece BRUTO: 5 unidades, receita 10000.
+        let (q_venda, r_venda): (i32, i64) = sqlx::query_as(
+            "SELECT quantidade, receita_centavos FROM bi.fato_vendas_item
+              WHERE tenant_id = $1 AND produto_id = $2 AND status = 'confirmada'",
+        )
+        .bind(tenant_id)
+        .bind(produto_id.as_uuid())
+        .fetch_one(&pool2)
+        .await
+        .expect("fato venda");
+        assert_eq!(q_venda, 5, "venda continua bruta (mês estável)");
+        assert_eq!(r_venda, 10_000);
+
+        // Existe um fato NEGATIVO de devolução: -2 unidades, -4000.
+        let (q_dev, r_dev): (i32, i64) = sqlx::query_as(
+            "SELECT quantidade, receita_centavos FROM bi.fato_vendas_item
+              WHERE tenant_id = $1 AND produto_id = $2 AND status = 'devolucao'",
+        )
+        .bind(tenant_id)
+        .bind(produto_id.as_uuid())
+        .fetch_one(&pool2)
+        .await
+        .expect("fato devolucao");
+        assert_eq!(q_dev, -2);
+        assert_eq!(r_dev, -4_000);
+
+        // O líquido (soma dos dois) = 3 unidades, 6000.
+        let (q_liq, r_liq): (i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(SUM(quantidade), 0)::bigint, COALESCE(SUM(receita_centavos), 0)::bigint
+               FROM bi.fato_vendas_item
+              WHERE tenant_id = $1 AND produto_id = $2 AND status IN ('confirmada', 'devolucao')",
+        )
+        .bind(tenant_id)
+        .bind(produto_id.as_uuid())
+        .fetch_one(&pool2)
+        .await
+        .expect("liquido");
+        assert_eq!(q_liq, 3);
+        assert_eq!(r_liq, 6_000);
     })
     .await;
     Ok(())

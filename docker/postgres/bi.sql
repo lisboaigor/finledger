@@ -365,59 +365,115 @@ END $$;
 
 -- Itens de venda: custo congelado na carga a partir da versão vigente do produto.
 -- Reprocessamentos só atualizam status/forma/data — nunca o custo congelado.
+--
+-- Devoluções PARCIAIS: o fato da venda guarda a quantidade BRUTA (efetiva em
+-- proj_vendas_itens + a já devolvida em proj_devolucoes), então o mês da venda
+-- fica ESTÁVEL; cada devolução vira um fato NEGATIVO datado no período em que
+-- ocorreu (status 'devolucao'). Assim relatórios por período não mudam
+-- retroativamente. (Devolução TOTAL cancela a venda → sai das análises pelo
+-- status, sem fato negativo.)
 CREATE OR REPLACE FUNCTION bi.etl_vendas() RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = bi, public AS $$
 DECLARE corte TIMESTAMPTZ := bi.watermark_corte('proj_vendas'); n BIGINT;
 BEGIN
+    -- 1) Fato da VENDA (bruto e estável): quantidade = efetiva + devolvida.
     INSERT INTO bi.fato_vendas_item AS f
         (tenant_id, item_id, venda_id, produto_sk, produto_id, cliente_id, vendedor_id,
          forma_pagamento, status, data_venda, quantidade, receita_centavos,
          custo_unitario_centavos, custo_centavos, margem_centavos, margem_liquida_centavos)
+    WITH dev AS (
+        SELECT tenant_id, venda_id, item_id, produto_id,
+               SUM(quantidade) AS q, SUM(receita_centavos) AS r
+          FROM proj_devolucoes GROUP BY 1, 2, 3, 4
+    ),
+    itens AS (
+        -- Itens ainda presentes na venda (quantidade já líquida das devoluções).
+        SELECT v.tenant_id, vi.item_id, v.venda_id, vi.produto_id, v.cliente_id,
+               v.vendedor_id, v.forma_pagamento, v.status,
+               COALESCE(v.confirmada_em, v.atualizado_em) AS quando,
+               vi.quantidade AS q_efetiva, vi.preco_unitario_centavos AS preco
+          FROM proj_vendas v
+          JOIN proj_vendas_itens vi ON vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
+         WHERE v.status IN ('confirmada', 'cancelada') AND v.atualizado_em > corte
+        UNION ALL
+        -- Itens que a devolução parcial zerou e removeu de proj_vendas_itens:
+        -- reconstruídos a partir de proj_devolucoes (preço = receita/qtd devolvida).
+        SELECT v.tenant_id, d.item_id, v.venda_id, d.produto_id, v.cliente_id,
+               v.vendedor_id, v.forma_pagamento, v.status,
+               COALESCE(v.confirmada_em, v.atualizado_em),
+               0, (d.r / NULLIF(d.q, 0))
+          FROM dev d
+          JOIN proj_vendas v ON v.tenant_id = d.tenant_id AND v.venda_id = d.venda_id
+         WHERE v.status IN ('confirmada', 'cancelada') AND v.atualizado_em > corte
+           AND NOT EXISTS (SELECT 1 FROM proj_vendas_itens vi
+                            WHERE vi.tenant_id = d.tenant_id AND vi.item_id = d.item_id)
+    )
     -- Custo congelado: prefere o custo médio real do saldo; cai no preço de
     -- custo do cadastro (limitação restante: é o custo médio ATUAL, não o da data da venda).
-    SELECT v.tenant_id, vi.item_id, v.venda_id, dp.sk, vi.produto_id, v.cliente_id, v.vendedor_id,
-           v.forma_pagamento, v.status,
-           bi.data_local(COALESCE(v.confirmada_em, v.atualizado_em)),
-           vi.quantidade,
-           vi.quantidade * vi.preco_unitario_centavos,
+    SELECT it.tenant_id, it.item_id, it.venda_id, dp.sk, it.produto_id, it.cliente_id,
+           it.vendedor_id, it.forma_pagamento, it.status,
+           bi.data_local(it.quando),
+           (it.q_efetiva + COALESCE(dev.q, 0)),
+           (it.q_efetiva + COALESCE(dev.q, 0)) * it.preco,
            COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
-           vi.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
-           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
+           (it.q_efetiva + COALESCE(dev.q, 0)) * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
+           (it.q_efetiva + COALESCE(dev.q, 0)) * (it.preco - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
            -- Sem impostos ainda (a NF é projetada logo após); a líquida nasce
            -- igual à bruta e é ajustada por bi.refresh_impostos_vendas().
-           vi.quantidade * (vi.preco_unitario_centavos - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
-      FROM proj_vendas v
-      JOIN proj_vendas_itens vi ON vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
+           (it.q_efetiva + COALESCE(dev.q, 0)) * (it.preco - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
+      FROM itens it
+      LEFT JOIN dev ON dev.tenant_id = it.tenant_id AND dev.item_id = it.item_id
       LEFT JOIN bi.dim_produto dp
-             ON dp.tenant_id = v.tenant_id AND dp.produto_id = vi.produto_id AND dp.atual
+             ON dp.tenant_id = it.tenant_id AND dp.produto_id = it.produto_id AND dp.atual
       LEFT JOIN proj_saldo_estoque se
-             ON se.tenant_id = v.tenant_id AND se.produto_id = vi.produto_id
-     WHERE v.status IN ('confirmada', 'cancelada') AND v.atualizado_em > corte
+             ON se.tenant_id = it.tenant_id AND se.produto_id = it.produto_id
     ON CONFLICT (tenant_id, item_id) DO UPDATE
        SET status = EXCLUDED.status,
            forma_pagamento = EXCLUDED.forma_pagamento,
            data_venda = EXCLUDED.data_venda,
-           -- Devolução parcial reduz a quantidade; receita/custo/margem são
-           -- recalculados mantendo o custo unitário CONGELADO na 1ª carga.
+           -- Quantidade BRUTA (estável): efetiva + devolvida. Custo unitário
+           -- permanece CONGELADO na 1ª carga.
            quantidade = EXCLUDED.quantidade,
            receita_centavos = EXCLUDED.receita_centavos,
            custo_centavos = EXCLUDED.quantidade * f.custo_unitario_centavos,
            margem_centavos = EXCLUDED.receita_centavos
                              - EXCLUDED.quantidade * f.custo_unitario_centavos,
-           -- Mantém os impostos já conhecidos; a líquida é reajustada aqui e
-           -- reconferida por bi.refresh_impostos_vendas() no mesmo ciclo.
            margem_liquida_centavos = (EXCLUDED.receita_centavos
                              - EXCLUDED.quantidade * f.custo_unitario_centavos)
                              - f.impostos_centavos;
     GET DIAGNOSTICS n = ROW_COUNT;
 
-    -- Itens integralmente devolvidos somem da projeção — remove do fato também.
-    DELETE FROM bi.fato_vendas_item f
-     USING proj_vendas v
-     WHERE v.tenant_id = f.tenant_id AND v.venda_id = f.venda_id
-       AND v.atualizado_em > corte
-       AND NOT EXISTS (SELECT 1 FROM proj_vendas_itens vi
-                        WHERE vi.tenant_id = f.tenant_id AND vi.item_id = f.item_id);
+    -- 2) Fato NEGATIVO de DEVOLUÇÃO, datado no período da devolução. item_id
+    --    sintético e estável por (item, instante) — não colide com a venda.
+    --    Recompute por ciclo (sem watermark próprio; volumes de PME).
+    INSERT INTO bi.fato_vendas_item AS f
+        (tenant_id, item_id, venda_id, produto_sk, produto_id, cliente_id, vendedor_id,
+         forma_pagamento, status, data_venda, quantidade, receita_centavos,
+         custo_unitario_centavos, custo_centavos, margem_centavos, margem_liquida_centavos)
+    SELECT d.tenant_id,
+           md5(d.item_id::text || d.devolvida_em::text)::uuid,
+           d.venda_id, dp.sk, d.produto_id, v.cliente_id, v.vendedor_id, v.forma_pagamento,
+           'devolucao',
+           bi.data_local(d.devolvida_em),
+           -d.quantidade,
+           -d.receita_centavos,
+           COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
+           -(d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
+           -(d.receita_centavos - d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
+           -(d.receita_centavos - d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
+      FROM proj_devolucoes d
+      JOIN proj_vendas v ON v.tenant_id = d.tenant_id AND v.venda_id = d.venda_id
+      LEFT JOIN bi.dim_produto dp
+             ON dp.tenant_id = d.tenant_id AND dp.produto_id = d.produto_id AND dp.atual
+      LEFT JOIN proj_saldo_estoque se
+             ON se.tenant_id = d.tenant_id AND se.produto_id = d.produto_id
+    ON CONFLICT (tenant_id, item_id) DO UPDATE
+       SET quantidade = EXCLUDED.quantidade,
+           receita_centavos = EXCLUDED.receita_centavos,
+           custo_centavos = EXCLUDED.custo_centavos,
+           margem_centavos = EXCLUDED.margem_centavos,
+           margem_liquida_centavos = EXCLUDED.margem_liquida_centavos,
+           data_venda = EXCLUDED.data_venda;
 
     PERFORM bi.watermark_avancar('proj_vendas', (SELECT MAX(atualizado_em) FROM proj_vendas));
     RETURN n;
@@ -621,9 +677,10 @@ BEGIN
                SUM(f.margem_centavos)         AS margem,
                SUM(f.margem_liquida_centavos) AS margem_liquida,
                SUM(f.quantidade)              AS qtd,
-               MAX(f.data_venda)              AS ultima_venda
+               MAX(f.data_venda) FILTER (WHERE f.status = 'confirmada') AS ultima_venda
           FROM bi.fato_vendas_item f
-         WHERE f.status = 'confirmada' AND f.data_venda >= bi.data_local(now()) - 365
+         -- Receita/margem/qtd líquidas de devolução (inclui os fatos negativos).
+         WHERE f.status IN ('confirmada', 'devolucao') AND f.data_venda >= bi.data_local(now()) - 365
          GROUP BY 1, 2
     ),
     -- Demanda diária: a janela é limitada à vida do produto (issue #15) — um
@@ -1148,7 +1205,8 @@ BEGIN
                 THEN 100.0 * SUM(margem_centavos) / SUM(receita_centavos) END
       INTO margem_pct
       FROM bi.fato_vendas_item
-     WHERE tenant_id = p_tenant AND status = 'confirmada'
+     -- Margem líquida de devolução (fatos negativos entram).
+     WHERE tenant_id = p_tenant AND status IN ('confirmada', 'devolucao')
        AND data_venda >= bi.data_local(now()) - 30;
 
     -- "Parado" = 90+ dias sem vender; quem nunca vendeu só conta se o cadastro

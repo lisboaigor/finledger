@@ -229,9 +229,11 @@ impl VendasProjection {
                     return Ok(());
                 };
                 // Devolução TOTAL preserva os itens para auditoria — a venda vira
-                // 'cancelada' pelo VendaCancelada emitido em seguida. Só a parcial
-                // reduz quantidades (e remove itens zerados), refletindo a NF
-                // que será reemitida com os itens restantes.
+                // 'cancelada' pelo VendaCancelada emitido em seguida (some das
+                // análises pelo status). Só a PARCIAL reduz quantidades (e remove
+                // itens zerados) e registra a devolução DATADA em proj_devolucoes,
+                // para o BI lançar um fato negativo no período da devolução em vez
+                // de reescrever o mês da venda.
                 if !devolucao_total {
                     for item in itens_devolvidos {
                         let Some(iid) = crate::projections::parse_uuid("item_id", &item.item_id)
@@ -247,6 +249,27 @@ impl VendasProjection {
                         .bind(tenant_id)
                         .execute(&self.pool)
                         .await?;
+
+                        if let Some(pid) =
+                            crate::projections::parse_uuid("produto_id", &item.produto_id)
+                        {
+                            let receita = item.quantidade as i64 * item.preco_unitario_centavos;
+                            sqlx::query(
+                                "INSERT INTO proj_devolucoes
+                                     (tenant_id, venda_id, item_id, produto_id, quantidade, receita_centavos, devolvida_em)
+                                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                 ON CONFLICT (tenant_id, venda_id, item_id, devolvida_em) DO NOTHING",
+                            )
+                            .bind(tenant_id)
+                            .bind(vid)
+                            .bind(iid)
+                            .bind(pid)
+                            .bind(item.quantidade as i32)
+                            .bind(receita)
+                            .bind(*occurred_at)
+                            .execute(&self.pool)
+                            .await?;
+                        }
                     }
                     sqlx::query(
                         "DELETE FROM proj_vendas_itens
