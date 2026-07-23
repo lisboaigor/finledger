@@ -491,12 +491,16 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         // (R$ 10.000,00). bps = custo_vendedor × 10_000 / base.
         const BASE_CENTAVOS: i64 = 1_000_000;
 
-        let perfil = self
-            .tenants
-            .obter_perfil_fiscal()
-            .await?
-            .para_dominio()?
-            .unwrap_or_else(PerfilFiscal::padrao_legado);
+        // Tenant SEM perfil fiscal configurado (ex.: MEI, que paga DAS fixo e
+        // não percentual sobre a venda) não recebe imposto efetivo assumido: a
+        // precificação assistida cairia num markup irreal ao embutir ~21,65% de
+        // regime normal onde não há imposto proporcional. Retorna vazio e o
+        // frontend usa o imposto manual do tenant (0 por padrão) — preserva o
+        // comportamento anterior ao recurso. Quem CONFIGURA o regime passa a ter
+        // a alíquota efetiva real da reforma.
+        let Some(perfil) = self.tenants.obter_perfil_fiscal().await?.para_dominio()? else {
+            return Ok(Vec::new());
+        };
         let data = hoje_brasil();
         let ctx = ContextoFiscal {
             fase: FaseTransicao::de_data(data),

@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod helpers;
-use helpers::{TestResult, create_tenant, in_tenant, new_tenant_id, setup_db, start_postgres};
+use helpers::{
+    TestResult, create_tenant, in_tenant, new_tenant_id, seed_produto, setup_db, start_postgres,
+};
 
 use std::sync::Arc;
 
@@ -713,6 +715,38 @@ async fn simples_configurado_emite_sem_legados_com_csosn_e_das() -> TestResult {
             .find(|p| p.produto_id == produto_id)
             .expect("produto na lista");
         assert_eq!(efetiva.imposto_efetivo_bps, 700, "custo do vendedor = DAS");
+    })
+    .await;
+    Ok(())
+}
+
+/// Regressão de precificação: tenant SEM perfil fiscal configurado (ex.: MEI,
+/// que paga DAS fixo e não percentual sobre a venda) NÃO recebe alíquota
+/// efetiva assumida — senão a precificação assistida embutiria ~21,65% de
+/// regime normal no markup e explodiria o preço (fusível de R$1,25 virou R$6,15
+/// em produção). Só quem CONFIGURA o regime recebe a alíquota real da reforma.
+#[tokio::test]
+async fn aliquota_efetiva_vazia_sem_perfil_fiscal() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+    let fiscal = Arc::new(montar_fiscal(&pool, EventBus::new()));
+
+    let tenant_id = new_tenant_id(); // não existe em `tenants` → perfil ausente
+    let produto_id = Uuid::new_v4();
+    in_tenant(tenant_id, async move {
+        seed_produto(&pool, tenant_id, produto_id, "SKU-MEI", 1000)
+            .await
+            .expect("seed produto");
+        // Mesmo com produto ativo, sem perfil fiscal a lista vem vazia: o
+        // frontend cai no imposto manual do tenant (0 por padrão).
+        let efetivas = fiscal
+            .listar_aliquota_efetiva_produtos()
+            .await
+            .expect("aliquotas efetivas");
+        assert!(
+            efetivas.is_empty(),
+            "tenant sem perfil fiscal não deve receber imposto efetivo assumido"
+        );
     })
     .await;
     Ok(())

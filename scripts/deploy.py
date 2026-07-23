@@ -212,6 +212,20 @@ def main() -> None:
     rssh(migrar)
     ok("migrações aplicadas")
 
+    # ── 6b. Schema analítico bi.sql (idempotente), ANTES do rebuild ───────────
+    # bi.sql NÃO está em migrations/ (é reaplicável por natureza: CREATE OR
+    # REPLACE + ADD COLUMN IF NOT EXISTS). Sem reaplicá-lo, o schema `bi` diverge
+    # do código a cada release que o altera — foi a causa do dashboard vazio
+    # (colunas/funções ausentes → 500 nos /bi/*). Reaplicar aqui mantém o
+    # warehouse em sincronia com o binário. O ETL do próprio backend repopula os
+    # fatos no próximo ciclo.
+    log("Reaplicando o schema analítico bi.sql (idempotente)")
+    rssh(
+        f"docker exec -i {pg_container} psql -v ON_ERROR_STOP=1 -U postgres -d finledger "
+        f"< {remote_dir}/docker/postgres/bi.sql >/dev/null"
+    )
+    ok("bi.sql aplicado")
+
     # ── 7. Rebuild + restart (build antes do recreate) ────────────────────────
     log("Rebuild + restart (docker compose up -d --build) — pode levar alguns minutos")
     rssh(f"cd {remote_dir} && docker compose -f {compose_file} --env-file {env_file} up -d --build")
