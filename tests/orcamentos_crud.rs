@@ -101,7 +101,7 @@ async fn ciclo_completo_do_orcamento_ate_aceite() -> TestResult {
         aguardar_projecoes().await;
 
         // Queries
-        let lista = query_dispatch(&*app.orcamentos, ListarOrcamentos { apenas_abertos: false })
+        let lista = query_dispatch(&*app.orcamentos, ListarOrcamentos { apenas_abertos: false, limite: None, offset: None })
             .await
             .expect("listar");
         assert_eq!(lista.len(), 1);
@@ -208,6 +208,8 @@ async fn aceitar_orcamento_gera_venda_em_andamento_e_marca_convertido() -> TestR
             ListarVendas {
                 produto_busca: None,
                 apenas_abertas: true,
+                limite: None,
+                offset: None,
             },
         )
         .await
@@ -391,6 +393,8 @@ async fn desconto_do_orcamento_chega_liquido_na_venda_cr_e_nf() -> TestResult {
             ListarVendas {
                 produto_busca: None,
                 apenas_abertas: true,
+                limite: None,
+                offset: None,
             },
         )
         .await

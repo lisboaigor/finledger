@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use pharos_app::{dispatch, query_dispatch};
@@ -14,14 +14,23 @@ use crate::compras::application::commands::{
 };
 use crate::compras::application::queries::{BuscarPedidoCompra, ListarPedidosCompra};
 use crate::error::AppError;
+use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::ComprasState};
 
 pub async fn listar(
     State(s): State<ComprasState>,
     user: AuthUser,
+    Query(p): Query<PaginacaoParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     user.exigir_qualquer_role(&[Role::Comprador])?;
-    let pedidos = query_dispatch(&*s.compras, ListarPedidosCompra).await?;
+    let pedidos = query_dispatch(
+        &*s.compras,
+        ListarPedidosCompra {
+            limite: p.limite,
+            offset: p.offset,
+        },
+    )
+    .await?;
     Ok(Json(json!({ "pedidos": pedidos })))
 }
 

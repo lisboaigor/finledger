@@ -16,14 +16,18 @@ pub struct PedidoCompraResult {
     pub status: String,
 }
 
-#[derive(Query)]
+#[derive(Query, Default)]
 #[query(result = Vec<PedidoCompraResult>)]
-pub struct ListarPedidosCompra;
+pub struct ListarPedidosCompra {
+    /// Paginação opcional (aditivo): sem os params, os 200 primeiros.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
+}
 
 impl QueryHandler<ListarPedidosCompra> for ComprasHandlers {
     type Error = AppError;
 
-    async fn handle(&self, _query: ListarPedidosCompra) -> Result<Vec<PedidoCompraResult>, AppError> {
-        self.repo.listar().await
+    async fn handle(&self, query: ListarPedidosCompra) -> Result<Vec<PedidoCompraResult>, AppError> {
+        self.repo.listar(query.limite, query.offset).await
     }
 }

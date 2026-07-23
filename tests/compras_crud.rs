@@ -43,7 +43,7 @@ async fn ciclo_completo_do_pedido_de_compra() -> TestResult {
             .expect("gerar");
         aguardar_projecoes().await;
 
-        let lista = query_dispatch(&*app.compras, ListarPedidosCompra)
+        let lista = query_dispatch(&*app.compras, ListarPedidosCompra::default())
             .await
             .expect("listar");
         assert_eq!(lista.len(), 1);

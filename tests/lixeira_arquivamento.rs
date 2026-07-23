@@ -54,7 +54,7 @@ async fn arquiva_lista_na_lixeira_e_restaura() -> TestResult {
         helpers::aguardar_projecoes().await;
 
         // Antes do prazo: nada arquivado, tudo listado normalmente.
-        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false })
+        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false, limite: None, offset: None })
             .await
             .expect("listar vendas");
         assert_eq!(vendas.len(), 1);
@@ -85,20 +85,20 @@ async fn arquiva_lista_na_lixeira_e_restaura() -> TestResult {
         assert_eq!(resultado["orcamentos"], 1, "rascunho velho deve ser arquivado");
 
         // Listagens padrão escondem; a lixeira mostra — nada foi excluído.
-        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false })
+        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false, limite: None, offset: None })
             .await
             .expect("listar vendas");
         assert!(vendas.is_empty());
-        let lixeira_v = query_dispatch(&*app.vendas, ListarVendasArquivadas)
+        let lixeira_v = query_dispatch(&*app.vendas, ListarVendasArquivadas::default())
             .await
             .expect("lixeira vendas");
         assert_eq!(lixeira_v.len(), 1);
 
-        let orcs = query_dispatch(&*app.orcamentos, ListarOrcamentos { apenas_abertos: false })
+        let orcs = query_dispatch(&*app.orcamentos, ListarOrcamentos { apenas_abertos: false, limite: None, offset: None })
             .await
             .expect("listar orçamentos");
         assert!(orcs.is_empty());
-        let lixeira_o = query_dispatch(&*app.orcamentos, ListarOrcamentosArquivados)
+        let lixeira_o = query_dispatch(&*app.orcamentos, ListarOrcamentosArquivados::default())
             .await
             .expect("lixeira orçamentos");
         assert_eq!(lixeira_o.len(), 1);
@@ -113,11 +113,11 @@ async fn arquiva_lista_na_lixeira_e_restaura() -> TestResult {
             .await
             .expect("restaurar orçamento");
 
-        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false })
+        let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false, limite: None, offset: None })
             .await
             .expect("listar vendas");
         assert_eq!(vendas.len(), 1);
-        let lixeira_v = query_dispatch(&*app.vendas, ListarVendasArquivadas)
+        let lixeira_v = query_dispatch(&*app.vendas, ListarVendasArquivadas::default())
             .await
             .expect("lixeira vendas");
         assert!(lixeira_v.is_empty());

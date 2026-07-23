@@ -16,6 +16,7 @@ use crate::vendas::application::commands::{
 };
 use crate::auth::Roles;
 use crate::vendas::application::queries::{BuscarVenda, ListarVendas, ListarVendasArquivadas};
+use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::VendasState};
 
 #[derive(Deserialize)]
@@ -25,6 +26,10 @@ pub struct ListarVendasParams {
     /// `?abertas=true` → só vendas EmAndamento (recuperação no PDV).
     #[serde(default)]
     abertas: bool,
+    #[serde(default)]
+    limite: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
 }
 
 pub async fn listar(
@@ -38,6 +43,8 @@ pub async fn listar(
         ListarVendas {
             produto_busca: params.produto,
             apenas_abertas: params.abertas,
+            limite: params.limite,
+            offset: params.offset,
         },
     )
     .await?;
@@ -48,9 +55,17 @@ pub async fn listar(
 pub async fn listar_lixeira(
     State(s): State<VendasState>,
     user: AuthUser,
+    Query(p): Query<PaginacaoParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     user.exigir_role(Roles::ADMIN)?;
-    let vendas = query_dispatch(&*s.vendas, ListarVendasArquivadas).await?;
+    let vendas = query_dispatch(
+        &*s.vendas,
+        ListarVendasArquivadas {
+            limite: p.limite,
+            offset: p.offset,
+        },
+    )
+    .await?;
     Ok(Json(json!({ "vendas": vendas })))
 }
 

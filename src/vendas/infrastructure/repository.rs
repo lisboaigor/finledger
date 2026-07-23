@@ -6,6 +6,7 @@ use crate::shared::tenant_repository::TenantScopedRepository;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::shared::normalizar_paginacao;
 use crate::vendas::application::queries::{
     VendaArquivadaResult, VendaDetalhes, VendaItemResult, VendaResult,
 };
@@ -28,8 +29,11 @@ impl PostgresVendaRepository {
         &self,
         produto_busca: Option<String>,
         apenas_abertas: bool,
+        limite: Option<i64>,
+        offset: Option<i64>,
     ) -> Result<Vec<VendaResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT venda_id, vendedor_id, cliente_id, total_centavos, desconto_centavos,
                     CASE status
@@ -48,19 +52,26 @@ impl PostgresVendaRepository {
                    WHERE vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
                      AND (vi.sku ILIKE '%' || $2 || '%' OR vi.descricao ILIKE '%' || $2 || '%')
                ))
-             ORDER BY criada_em DESC LIMIT 200",
+             ORDER BY criada_em DESC LIMIT $4 OFFSET $5",
         )
         .bind(tenant_id)
         .bind(produto_busca)
         .bind(apenas_abertas)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)
     }
 
     /// Lixeira: vendas arquivadas pela rotina de limpeza (não excluídas).
-    pub async fn listar_lixeira(&self) -> Result<Vec<VendaArquivadaResult>, AppError> {
+    pub async fn listar_lixeira(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<VendaArquivadaResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT venda_id, vendedor_id, cliente_id, total_centavos, desconto_centavos,
                     CASE status
@@ -72,9 +83,11 @@ impl PostgresVendaRepository {
                     forma_pagamento, criada_em, arquivada_em
              FROM proj_vendas
              WHERE tenant_id = $1 AND arquivada_em IS NOT NULL
-             ORDER BY arquivada_em DESC LIMIT 500",
+             ORDER BY arquivada_em DESC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)

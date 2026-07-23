@@ -29,6 +29,9 @@ pub struct ListarVendas {
     pub produto_busca: Option<String>,
     /// Só vendas EmAndamento (recuperáveis no PDV). Padrão: todas.
     pub apenas_abertas: bool,
+    /// Paginação opcional (aditivo): sem os params, as 200 primeiras.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 impl QueryHandler<ListarVendas> for VendasHandlers {
@@ -36,7 +39,12 @@ impl QueryHandler<ListarVendas> for VendasHandlers {
 
     async fn handle(&self, query: ListarVendas) -> Result<Vec<VendaResult>, AppError> {
         self.repo
-            .listar(query.produto_busca, query.apenas_abertas)
+            .listar(
+                query.produto_busca,
+                query.apenas_abertas,
+                query.limite,
+                query.offset,
+            )
             .await
     }
 }

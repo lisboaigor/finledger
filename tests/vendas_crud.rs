@@ -122,6 +122,8 @@ async fn ciclo_completo_da_venda_com_queries() -> TestResult {
             ListarVendas {
                 produto_busca: None,
                 apenas_abertas: false,
+                limite: None,
+                offset: None,
             },
         )
         .await

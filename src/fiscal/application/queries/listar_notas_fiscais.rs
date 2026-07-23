@@ -53,14 +53,18 @@ pub struct NotaFiscalResult {
     pub is_centavos: i64,
 }
 
-#[derive(Query)]
+#[derive(Query, Default)]
 #[query(result = Vec<NotaFiscalResult>)]
-pub struct ListarNotasFiscais;
+pub struct ListarNotasFiscais {
+    /// Paginação opcional (aditivo): sem os params, as 200 primeiras.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
+}
 
 impl<S: SefazClient, A: AliquotaProvider> QueryHandler<ListarNotasFiscais> for FiscalHandlers<S, A> {
     type Error = AppError;
 
-    async fn handle(&self, _query: ListarNotasFiscais) -> Result<Vec<NotaFiscalResult>, AppError> {
-        self.repo.listar().await
+    async fn handle(&self, query: ListarNotasFiscais) -> Result<Vec<NotaFiscalResult>, AppError> {
+        self.repo.listar(query.limite, query.offset).await
     }
 }

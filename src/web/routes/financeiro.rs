@@ -4,7 +4,6 @@ use axum::{
     http::StatusCode,
 };
 use pharos_app::{dispatch, query_dispatch};
-use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -17,15 +16,8 @@ use crate::financeiro::application::commands::{
 use crate::financeiro::application::queries::{
     BuscarContaPagar, BuscarContaReceber, ListarContasPagar, ListarContasReceber,
 };
+use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::FinanceiroState};
-
-/// Paginação opcional das listagens (aditivo — sem os params o comportamento
-/// é o histórico). Clamp de limites na camada de repositório.
-#[derive(Deserialize)]
-pub struct PaginacaoParams {
-    limite: Option<i64>,
-    offset: Option<i64>,
-}
 
 pub async fn listar_contas_receber(
     State(s): State<FinanceiroState>,

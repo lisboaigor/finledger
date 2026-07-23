@@ -7,9 +7,13 @@ use crate::error::AppError;
 use crate::orcamentos::application::handler::OrcamentosHandlers;
 
 /// Lixeira: orçamentos arquivados pela rotina de limpeza (visão do gestor).
-#[derive(Query)]
+#[derive(Query, Default)]
 #[query(result = Vec<OrcamentoArquivadoResult>)]
-pub struct ListarOrcamentosArquivados;
+pub struct ListarOrcamentosArquivados {
+    /// Paginação opcional (aditivo): sem os params, os 200 primeiros.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
+}
 
 /// Linha da lixeira: mesma leitura da listagem + quando foi criado/arquivado.
 #[derive(Serialize, sqlx::FromRow)]
@@ -31,8 +35,8 @@ impl QueryHandler<ListarOrcamentosArquivados> for OrcamentosHandlers {
 
     async fn handle(
         &self,
-        _q: ListarOrcamentosArquivados,
+        q: ListarOrcamentosArquivados,
     ) -> Result<Vec<OrcamentoArquivadoResult>, AppError> {
-        self.repo.listar_lixeira().await
+        self.repo.listar_lixeira(q.limite, q.offset).await
     }
 }

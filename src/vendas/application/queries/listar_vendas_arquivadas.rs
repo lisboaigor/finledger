@@ -20,14 +20,18 @@ pub struct VendaArquivadaResult {
 }
 
 /// Lixeira: vendas arquivadas pela rotina de limpeza (visão do gestor).
-#[derive(Query)]
+#[derive(Query, Default)]
 #[query(result = Vec<VendaArquivadaResult>)]
-pub struct ListarVendasArquivadas;
+pub struct ListarVendasArquivadas {
+    /// Paginação opcional (aditivo): sem os params, as 200 primeiras.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
+}
 
 impl QueryHandler<ListarVendasArquivadas> for VendasHandlers {
     type Error = AppError;
 
-    async fn handle(&self, _q: ListarVendasArquivadas) -> Result<Vec<VendaArquivadaResult>, AppError> {
-        self.repo.listar_lixeira().await
+    async fn handle(&self, q: ListarVendasArquivadas) -> Result<Vec<VendaArquivadaResult>, AppError> {
+        self.repo.listar_lixeira(q.limite, q.offset).await
     }
 }

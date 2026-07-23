@@ -6,6 +6,7 @@ use crate::shared::tenant_repository::TenantScopedRepository;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::shared::normalizar_paginacao;
 use crate::orcamentos::application::queries::{
     OrcamentoArquivadoResult, OrcamentoDetalhes, OrcamentoItemResult, OrcamentoResult,
 };
@@ -24,8 +25,14 @@ impl PostgresOrcamentoRepository {
         }
     }
 
-    pub async fn listar(&self, apenas_abertos: bool) -> Result<Vec<OrcamentoResult>, AppError> {
+    pub async fn listar(
+        &self,
+        apenas_abertos: bool,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<OrcamentoResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT orcamento_id, vendedor_id, cliente_id, cliente_avulso, total_centavos, desconto_centavos,
                     CASE status
@@ -42,18 +49,25 @@ impl PostgresOrcamentoRepository {
              FROM proj_orcamentos
              WHERE tenant_id = $1 AND arquivado_em IS NULL
                AND (NOT $2 OR status IN ('rascunho', 'emitido'))
-             ORDER BY criado_em DESC LIMIT 200",
+             ORDER BY criado_em DESC LIMIT $3 OFFSET $4",
         )
         .bind(tenant_id)
         .bind(apenas_abertos)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)
     }
 
     /// Lixeira: orçamentos arquivados pela rotina de limpeza (não excluídos).
-    pub async fn listar_lixeira(&self) -> Result<Vec<OrcamentoArquivadoResult>, AppError> {
+    pub async fn listar_lixeira(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<OrcamentoArquivadoResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT orcamento_id, vendedor_id, cliente_id, cliente_avulso, total_centavos, desconto_centavos,
                     CASE status
@@ -69,9 +83,11 @@ impl PostgresOrcamentoRepository {
                     validade_dias, criado_em, arquivado_em
              FROM proj_orcamentos
              WHERE tenant_id = $1 AND arquivado_em IS NOT NULL
-             ORDER BY arquivado_em DESC LIMIT 500",
+             ORDER BY arquivado_em DESC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)

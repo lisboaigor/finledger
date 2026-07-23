@@ -24,12 +24,17 @@ pub struct ListarOrcamentos {
     /// Só orçamentos em aberto (Rascunho/Emitido) — recuperáveis no PDV.
     /// Padrão: todos.
     pub apenas_abertos: bool,
+    /// Paginação opcional (aditivo): sem os params, os 200 primeiros.
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 impl QueryHandler<ListarOrcamentos> for OrcamentosHandlers {
     type Error = AppError;
 
     async fn handle(&self, query: ListarOrcamentos) -> Result<Vec<OrcamentoResult>, AppError> {
-        self.repo.listar(query.apenas_abertos).await
+        self.repo
+            .listar(query.apenas_abertos, query.limite, query.offset)
+            .await
     }
 }

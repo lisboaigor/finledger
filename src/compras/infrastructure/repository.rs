@@ -10,6 +10,7 @@ use crate::compras::application::queries::{
 };
 use crate::compras::domain::pedido_compra::{PedidoCompra, PedidoCompraId};
 use crate::error::AppError;
+use crate::shared::normalizar_paginacao;
 
 pub struct PostgresPedidoCompraRepository {
     inner: TenantScopedRepository<PedidoCompra>,
@@ -24,8 +25,13 @@ impl PostgresPedidoCompraRepository {
         }
     }
 
-    pub async fn listar(&self) -> Result<Vec<PedidoCompraResult>, AppError> {
+    pub async fn listar(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<PedidoCompraResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT pedido_id, comprador_id, fornecedor_id, total_centavos, prazo_pagamento_dias,
                     CASE status
@@ -37,9 +43,12 @@ impl PostgresPedidoCompraRepository {
                         WHEN 'cancelado' THEN 'Cancelado'
                         ELSE status
                     END AS status
-             FROM proj_pedidos_compra WHERE tenant_id = $1 ORDER BY criado_em DESC LIMIT 200",
+             FROM proj_pedidos_compra WHERE tenant_id = $1
+             ORDER BY criado_em DESC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)

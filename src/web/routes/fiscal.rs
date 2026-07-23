@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use pharos_app::{dispatch, query_dispatch};
@@ -13,14 +13,23 @@ use crate::fiscal::application::commands::{CancelarNotaFiscal, RetransmitirNotaF
 use crate::fiscal::application::queries::{
     BuscarNotaFiscal, ListarClassesTributarias, ListarNotasFiscais,
 };
+use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::FiscalState};
 
 pub async fn listar(
     State(s): State<FiscalState>,
     user: AuthUser,
+    Query(p): Query<PaginacaoParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     user.exigir_qualquer_role(&[Role::Fiscal, Role::Financeiro])?;
-    let notas = query_dispatch(&*s.fiscal, ListarNotasFiscais).await?;
+    let notas = query_dispatch(
+        &*s.fiscal,
+        ListarNotasFiscais {
+            limite: p.limite,
+            offset: p.offset,
+        },
+    )
+    .await?;
     Ok(Json(json!({ "notas": notas })))
 }
 

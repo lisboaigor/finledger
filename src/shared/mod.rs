@@ -7,6 +7,25 @@ use crate::error::AppError;
 pub mod tenant;
 pub mod tenant_repository;
 
+/// Limite padrão de uma listagem quando o cliente não informa `limite`
+/// (preserva o comportamento histórico das telas).
+pub const PAGINA_LIMITE_PADRAO: i64 = 200;
+/// Teto de segurança por página, independentemente do que o cliente pedir —
+/// impede que uma listagem varra a projeção inteira num único request.
+pub const PAGINA_LIMITE_MAX: i64 = 500;
+
+/// Normaliza paginação vinda de query params: `limite` em `1..=PAGINA_LIMITE_MAX`
+/// (default [`PAGINA_LIMITE_PADRAO`]) e `offset` ≥ 0. Compartilhado por todas as
+/// listagens para não repetir clamp por contexto.
+pub fn normalizar_paginacao(limite: Option<i64>, offset: Option<i64>) -> (i64, i64) {
+    (
+        limite
+            .unwrap_or(PAGINA_LIMITE_PADRAO)
+            .clamp(1, PAGINA_LIMITE_MAX),
+        offset.unwrap_or(0).max(0),
+    )
+}
+
 /// Carrega um agregado pelo id, mapeando ausência/erro de infra para [`AppError`].
 ///
 /// Repetido de forma idêntica em cada `*Handlers` de bounded context antes desta
@@ -444,7 +463,19 @@ impl ValueObject for Telefone {}
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::Dinheiro;
+    use super::{Dinheiro, normalizar_paginacao, PAGINA_LIMITE_MAX, PAGINA_LIMITE_PADRAO};
+
+    #[test]
+    fn paginacao_aplica_defaults_e_clampa() {
+        // Sem params → default histórico, offset 0.
+        assert_eq!(normalizar_paginacao(None, None), (PAGINA_LIMITE_PADRAO, 0));
+        // Limite acima do teto é clampado; offset negativo vira 0.
+        assert_eq!(normalizar_paginacao(Some(10_000), Some(-5)), (PAGINA_LIMITE_MAX, 0));
+        // Limite ≤ 0 sobe para 1 (nunca uma página vazia por erro de cliente).
+        assert_eq!(normalizar_paginacao(Some(0), Some(40)), (1, 40));
+        // Dentro da faixa passa intacto.
+        assert_eq!(normalizar_paginacao(Some(50), Some(100)), (50, 100));
+    }
 
     #[test]
     fn display_formata_positivos_e_zero() {

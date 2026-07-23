@@ -8,14 +8,8 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::financeiro::application::queries::{ContaPagarResult, ContaReceberResult};
 
-/// Normaliza paginação vinda de query params: `limite` em 1..=500 (default
-/// 200, o comportamento histórico) e `offset` ≥ 0.
-pub fn normalizar_paginacao(limite: Option<i64>, offset: Option<i64>) -> (i64, i64) {
-    (
-        limite.unwrap_or(200).clamp(1, 500),
-        offset.unwrap_or(0).max(0),
-    )
-}
+use crate::shared::normalizar_paginacao;
+
 use crate::financeiro::domain::conta_pagar::{ContaPagar, ContaPagarId};
 use crate::financeiro::domain::conta_receber::{ContaReceber, ContaReceberId};
 

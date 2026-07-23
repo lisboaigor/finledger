@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::fiscal::application::queries::NotaFiscalResult;
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
+use crate::shared::normalizar_paginacao;
 
 pub struct PostgresNotaFiscalRepository {
     inner: TenantScopedRepository<NotaFiscal>,
@@ -26,8 +27,13 @@ impl PostgresNotaFiscalRepository {
         &self.pool
     }
 
-    pub async fn listar(&self) -> Result<Vec<NotaFiscalResult>, AppError> {
+    pub async fn listar(
+        &self,
+        limite: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<NotaFiscalResult>, AppError> {
         let tenant_id = current_tenant_id()?;
+        let (limite, offset) = normalizar_paginacao(limite, offset);
         sqlx::query_as(
             "SELECT nf_id, venda_id, cliente_id, modelo, serie, numero, chave, total_centavos, desconto_centavos, cancelamento_pendente,
                     icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
@@ -40,9 +46,12 @@ impl PostgresNotaFiscalRepository {
                         WHEN 'cancelada' THEN 'Cancelada'
                         ELSE status
                     END AS status
-             FROM proj_notas_fiscais WHERE tenant_id = $1 ORDER BY gerada_em DESC LIMIT 200",
+             FROM proj_notas_fiscais WHERE tenant_id = $1
+             ORDER BY gerada_em DESC LIMIT $2 OFFSET $3",
         )
         .bind(tenant_id)
+        .bind(limite)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)

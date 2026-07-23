@@ -18,6 +18,7 @@ use crate::auth::Roles;
 use crate::orcamentos::application::queries::{
     BuscarOrcamento, ListarOrcamentos, ListarOrcamentosArquivados,
 };
+use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::OrcamentosState};
 
 #[derive(Deserialize)]
@@ -25,6 +26,10 @@ pub struct ListarOrcamentosParams {
     /// `?abertos=true` → só orçamentos Rascunho/Emitido (recuperação no PDV).
     #[serde(default)]
     abertos: bool,
+    #[serde(default)]
+    limite: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
 }
 
 pub async fn listar(
@@ -37,6 +42,8 @@ pub async fn listar(
         &*s.orcamentos,
         ListarOrcamentos {
             apenas_abertos: params.abertos,
+            limite: params.limite,
+            offset: params.offset,
         },
     )
     .await?;
@@ -47,9 +54,17 @@ pub async fn listar(
 pub async fn listar_lixeira(
     State(s): State<OrcamentosState>,
     user: AuthUser,
+    Query(p): Query<PaginacaoParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     user.exigir_role(Roles::ADMIN)?;
-    let orcamentos = query_dispatch(&*s.orcamentos, ListarOrcamentosArquivados).await?;
+    let orcamentos = query_dispatch(
+        &*s.orcamentos,
+        ListarOrcamentosArquivados {
+            limite: p.limite,
+            offset: p.offset,
+        },
+    )
+    .await?;
     Ok(Json(json!({ "orcamentos": orcamentos })))
 }
 
