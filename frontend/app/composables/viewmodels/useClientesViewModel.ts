@@ -41,11 +41,11 @@ export function useClientesViewModel() {
     const dialogVisible = ref(false)
     const editando = ref<Cliente | null>(null)
     const salvando = ref(false)
-    const form = reactive({ nome: '', cpf_cnpj: '', telefone: '', email: '' })
+    const form = reactive({ nome: '', cpf_cnpj: '', telefone: '', email: '', uf: '' })
 
     function abrirNovo() {
         editando.value = null
-        Object.assign(form, { nome: '', cpf_cnpj: '', telefone: '', email: '' })
+        Object.assign(form, { nome: '', cpf_cnpj: '', telefone: '', email: '', uf: '' })
         dialogVisible.value = true
     }
 
@@ -56,6 +56,7 @@ export function useClientesViewModel() {
             cpf_cnpj: c.cpf_cnpj,
             telefone: c.telefone ?? '',
             email: c.email ?? '',
+            uf: c.uf ?? '',
         })
         dialogVisible.value = true
     }
@@ -68,6 +69,7 @@ export function useClientesViewModel() {
                     nome: form.nome,
                     telefone: form.telefone || null,
                     email: form.email || null,
+                    uf: form.uf || null,
                 })
             } else {
                 await criarCliente(apiFetch, {
@@ -75,6 +77,7 @@ export function useClientesViewModel() {
                     cpf_cnpj: form.cpf_cnpj,
                     telefone: form.telefone || null,
                     email: form.email || null,
+                    uf: form.uf || null,
                 })
             }
             notifySuccess('Salvo', 'Cliente salvo.')

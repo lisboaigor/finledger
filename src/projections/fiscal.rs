@@ -79,14 +79,18 @@ impl FiscalProjection {
                 // duas linhas do mesmo produto (a venda não funde linhas), então
                 // agregamos por produto: a PK (tenant, nf, produto) exige grão
                 // por produto e um DO NOTHING descartaria a 2ª linha.
-                let mut por_produto: std::collections::HashMap<uuid::Uuid, (i32, i64, ImpostoItem)> =
-                    std::collections::HashMap::new();
+                let mut por_produto: std::collections::HashMap<
+                    uuid::Uuid,
+                    (i32, i64, ImpostoItem, String),
+                > = std::collections::HashMap::new();
                 for item in itens {
-                    let (qtd, total, imp) = por_produto
+                    let (qtd, total, imp, cfop) = por_produto
                         .entry(item.produto_id)
-                        .or_insert_with(|| (0, 0, ImpostoItem::default()));
+                        .or_insert_with(|| (0, 0, ImpostoItem::default(), String::new()));
                     *qtd += item.quantidade() as i32;
                     *total += item.total_centavos();
+                    // CFOP é o mesmo para todos os itens do produto na NF.
+                    *cfop = item.cfop().to_string();
                     imp.icms_centavos += item.imposto.icms_centavos;
                     imp.iss_centavos += item.imposto.iss_centavos;
                     imp.pis_centavos += item.imposto.pis_centavos;
@@ -96,14 +100,14 @@ impl FiscalProjection {
                     imp.ibs_mun_centavos += item.imposto.ibs_mun_centavos;
                     imp.is_centavos += item.imposto.is_centavos;
                 }
-                for (produto_id, (quantidade, total, imp)) in por_produto {
+                for (produto_id, (quantidade, total, imp, cfop)) in por_produto {
                     sqlx::query(
                         "INSERT INTO proj_nf_itens
                          (tenant_id, nf_id, venda_id, produto_id, quantidade, total_centavos,
                           icms_centavos, iss_centavos, pis_centavos, cofins_centavos,
                           cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
-                          ibs_cbs_informativo)
-                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                          ibs_cbs_informativo, cfop)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
                          ON CONFLICT (tenant_id, nf_id, produto_id) DO NOTHING",
                     )
                     .bind(tenant_id)
@@ -121,6 +125,7 @@ impl FiscalProjection {
                     .bind(imp.ibs_mun_centavos)
                     .bind(imp.is_centavos)
                     .bind(*ibs_cbs_informativo)
+                    .bind(cfop)
                     .execute(&self.pool)
                     .await?;
                 }

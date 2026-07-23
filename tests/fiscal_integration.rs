@@ -902,3 +902,92 @@ async fn nf_com_desconto_rateia_a_base_de_calculo_por_item() -> TestResult {
     }
     Ok(())
 }
+
+/// CFOP dinâmico por UF do destinatário: venda interestadual (destino ≠ SP do
+/// emitente) usa 6102; intraestadual (destino SP) usa 5102. A UF vem de
+/// proj_clientes; o emitente é o SP do perfil legado padrão.
+#[tokio::test]
+async fn cfop_dinamico_por_uf_do_destinatario() -> TestResult {
+    let (_container, pool) = start_postgres().await?;
+    setup_db(&pool).await?;
+
+    let repo = Arc::new(PostgresNotaFiscalRepository::new(pool.clone()));
+    let bus = EventBus::new();
+    use finledger::projections::fiscal::FiscalProjection;
+    bus.register(FiscalProjection::new(pool.clone()));
+    let fiscal = FiscalHandlers::new(
+        repo,
+        Arc::new(StubSefazClient),
+        Arc::new(PostgresAliquotaProvider::new(pool.clone())),
+        Arc::new(TenantRepository::new(pool.clone())),
+        bus,
+    );
+
+    let tenant_id = new_tenant_id();
+    let pool2 = pool.clone();
+    in_tenant(tenant_id, async move {
+        let seed_cliente = |cid: Uuid, cpf: &'static str, uf: &'static str| {
+            let p = pool2.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO proj_clientes
+                        (cliente_id, nome, cpf_cnpj, uf, bloqueado, ativo, criado_em, atualizado_em, tenant_id)
+                     VALUES ($1, 'Cliente', $2, $3, false, true, now(), now(), $4)",
+                )
+                .bind(cid)
+                .bind(cpf)
+                .bind(uf)
+                .bind(tenant_id)
+                .execute(&p)
+                .await
+                .expect("seed cliente");
+            }
+        };
+        let item = |prod: Uuid| finledger::vendas::domain::events::ItemVendaSnapshot {
+            item_id: prod.to_string(),
+            produto_id: prod.to_string(),
+            sku: "SKU".into(),
+            descricao: "Peça".into(),
+            quantidade: 1,
+            preco_unitario_centavos: 5000,
+        };
+
+        // Interestadual: destino RJ.
+        let cli_rj = Uuid::new_v4();
+        seed_cliente(cli_rj, "11111111111", "RJ").await;
+        let venda_rj = Uuid::new_v4();
+        fiscal
+            .gerar_e_transmitir(venda_rj, Some(cli_rj), &[item(Uuid::new_v4())], 0)
+            .await
+            .expect("gerar RJ");
+
+        // Intraestadual: destino SP (= UF do emitente legado).
+        let cli_sp = Uuid::new_v4();
+        seed_cliente(cli_sp, "22222222222", "SP").await;
+        let venda_sp = Uuid::new_v4();
+        fiscal
+            .gerar_e_transmitir(venda_sp, Some(cli_sp), &[item(Uuid::new_v4())], 0)
+            .await
+            .expect("gerar SP");
+
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        let cfop_rj: Option<String> =
+            sqlx::query_scalar("SELECT cfop FROM proj_nf_itens WHERE venda_id = $1")
+                .bind(venda_rj)
+                .fetch_optional(&pool2)
+                .await
+                .expect("cfop rj");
+        assert_eq!(cfop_rj.as_deref(), Some("6102"), "interestadual → 6102");
+
+        let cfop_sp: Option<String> =
+            sqlx::query_scalar("SELECT cfop FROM proj_nf_itens WHERE venda_id = $1")
+                .bind(venda_sp)
+                .fetch_optional(&pool2)
+                .await
+                .expect("cfop sp");
+        assert_eq!(cfop_sp.as_deref(), Some("5102"), "intraestadual → 5102");
+    })
+    .await;
+    Ok(())
+}

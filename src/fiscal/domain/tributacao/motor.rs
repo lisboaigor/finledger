@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::aliquota::Aliquota;
 use super::classe_tributaria::ClasseTributariaInfo;
 use super::fase_transicao::FaseTransicao;
-use super::perfil_fiscal::PerfilFiscal;
+use super::perfil_fiscal::{PerfilFiscal, RegimeTributario};
 use crate::fiscal::domain::value_objects::ImpostoItem;
 
 /// Alíquotas já resolvidas (pela infraestrutura) para um item, na data de
@@ -48,6 +48,7 @@ impl MotorTributario {
         // continuar emitindo os valores históricos do cliente em produção; o
         // caminho correto é o tenant configurar o perfil fiscal.
         let simples_por_dentro = ctx.perfil.simples_recolhe_por_dentro();
+        let e_simples = ctx.perfil.regime == RegimeTributario::SimplesNacional;
 
         let aplicar = |a: Option<Aliquota>| a.unwrap_or_else(Aliquota::zero).aplicar(base_centavos);
 
@@ -138,7 +139,10 @@ impl MotorTributario {
             is_centavos: is_seletivo,
             c_class_trib: Some(classe.classe.as_str().to_string()),
             cst_ibs_cbs: Some(classe.cst_ibs_cbs.clone()),
-            csosn: simples_por_dentro.then(|| "102".to_string()),
+            // Simples → CSOSN; regimes normais → CST do ICMS. Caso geral sem ST
+            // (a marcação de ST por classe/NCM é deferida — issue #16).
+            csosn: e_simples.then(|| "102".to_string()),
+            cst_icms: (!e_simples).then(|| "00".to_string()),
             das_centavos: das,
         }
     }

@@ -8,6 +8,7 @@ pub enum CrmEvent {
         cliente_id: String,
         nome: String,
         cpf_cnpj: String,
+        uf: Option<String>,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },
@@ -17,6 +18,7 @@ pub enum CrmEvent {
         nome: String,
         telefone: Option<String>,
         email: Option<String>,
+        uf: Option<String>,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },

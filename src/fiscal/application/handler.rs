@@ -7,6 +7,7 @@ use uuid::Uuid;
 use super::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
 use super::queries::AliquotaEfetivaProduto;
 use crate::error::AppError;
+use crate::fiscal::domain::cfop::{resolver_cfop, TipoOperacao};
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
 use crate::fiscal::domain::tributacao::{
     AliquotasItem, ClasseTributaria, ContextoFiscal, FaseTransicao, MotorTributario, PerfilFiscal,
@@ -63,7 +64,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             ModeloNF::NFCe
         };
         let (itens_nf, ibs_cbs_informativo) = self
-            .enriquecer_itens(itens_venda, desconto_centavos, &modelo)
+            .enriquecer_itens(itens_venda, desconto_centavos, &modelo, cliente_id)
             .await?;
 
         let numero = self.proximo_numero(SERIE_PADRAO).await?;
@@ -281,6 +282,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         itens: &[ItemVendaSnapshot],
         desconto_centavos: i64,
         modelo: &ModeloNF,
+        cliente_id: Option<Uuid>,
     ) -> Result<(Vec<ItemNF>, bool), AppError> {
         // Perfil e fase resolvidos uma vez por NF; os valores calculados ficam
         // congelados no evento — replay/retransmissão nunca recalcula.
@@ -293,6 +295,22 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         // Dia fiscal no Brasil (America/Sao_Paulo), não em UTC — NF emitida à
         // noite não pode pular de dia (nem de fase, na virada de ano).
         let data_emissao = hoje_brasil();
+        // UF do destinatário (para o CFOP intra/interestadual). Ausente =
+        // operação interna. UF do emitente vem do perfil fiscal do tenant.
+        let uf_emitente = perfil.uf.as_str().to_string();
+        let uf_destinatario: Option<String> = if let Some(cid) = cliente_id {
+            sqlx::query_scalar(
+                "SELECT uf FROM proj_clientes WHERE cliente_id = $1 AND tenant_id = $2",
+            )
+            .bind(cid)
+            .bind(current_tenant_id()?)
+            .fetch_optional(self.repo.pool())
+            .await
+            .map_err(AppError::infra)?
+            .flatten()
+        } else {
+            None
+        };
         let ctx = ContextoFiscal {
             fase: FaseTransicao::de_data(data_emissao),
             perfil,
@@ -330,12 +348,21 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             // aos de antes do desconto existir).
             let base = item.preco_unitario_centavos * item.quantidade as i64 - desconto_item;
             let imposto = MotorTributario::calcular_item(&ctx, &aliquotas, &classe, base);
+            // CFOP dinâmico por operação/UF. tem_st fica em false enquanto o
+            // ICMS-ST (marcação por classe/NCM) não é modelado — ver issue #16.
+            let cfop = resolver_cfop(
+                TipoOperacao::Venda,
+                &uf_emitente,
+                uf_destinatario.as_deref(),
+                modelo,
+                false,
+            );
             result.push(ItemNF::novo(
                 produto_id,
                 item.sku.clone(),
                 item.descricao.clone(),
                 ncm,
-                modelo.cfop_padrao().into(),
+                cfop.into(),
                 item.quantidade,
                 item.preco_unitario_centavos,
                 imposto,

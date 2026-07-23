@@ -21,6 +21,7 @@ impl CrmProjection {
                 cliente_id,
                 nome,
                 cpf_cnpj,
+                uf,
                 occurred_at,
             } => {
                 let Some(id) = crate::projections::parse_uuid("cliente_id", cliente_id) else {
@@ -28,13 +29,14 @@ impl CrmProjection {
                 };
                 sqlx::query(
                     "INSERT INTO proj_clientes
-                        (cliente_id, nome, cpf_cnpj, bloqueado, criado_em, atualizado_em, tenant_id)
-                     VALUES ($1, $2, $3, FALSE, $4, $4, $5)
+                        (cliente_id, nome, cpf_cnpj, uf, bloqueado, criado_em, atualizado_em, tenant_id)
+                     VALUES ($1, $2, $3, $4, FALSE, $5, $5, $6)
                      ON CONFLICT (tenant_id, cliente_id) DO NOTHING",
                 )
                 .bind(id)
                 .bind(nome.as_str())
                 .bind(cpf_cnpj.as_str())
+                .bind(uf.as_deref())
                 .bind(*occurred_at)
                 .bind(tenant_id)
                 .execute(&self.pool)
@@ -45,6 +47,7 @@ impl CrmProjection {
                 nome,
                 telefone,
                 email,
+                uf,
                 occurred_at,
             } => {
                 let Some(id) = crate::projections::parse_uuid("cliente_id", cliente_id) else {
@@ -52,13 +55,14 @@ impl CrmProjection {
                 };
                 sqlx::query(
                     "UPDATE proj_clientes
-                     SET nome = $2, telefone = $3, email = $4, atualizado_em = $5
-                     WHERE cliente_id = $1 AND tenant_id = $6",
+                     SET nome = $2, telefone = $3, email = $4, uf = $5, atualizado_em = $6
+                     WHERE cliente_id = $1 AND tenant_id = $7",
                 )
                 .bind(id)
                 .bind(nome.as_str())
                 .bind(telefone.as_deref())
                 .bind(email.as_deref())
+                .bind(uf.as_deref())
                 .bind(*occurred_at)
                 .bind(tenant_id)
                 .execute(&self.pool)

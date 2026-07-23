@@ -116,6 +116,13 @@ onMounted(vm.carregar)
                             <Input v-model="vm.form.email" />
                         </Field>
                     </div>
+                    <Field>
+                        <FieldLabel>UF (destinatário)</FieldLabel>
+                        <Input v-model="vm.form.uf" maxlength="2" placeholder="Ex.: SP" />
+                        <p class="text-xs text-muted-foreground">
+                            Usada na nota fiscal para o CFOP (operação dentro ou fora do estado).
+                        </p>
+                    </Field>
                 </div>
                 <DialogFooter>
                     <Button variant="ghost" @click="vm.dialogVisible = false">Cancelar</Button>

@@ -13,6 +13,8 @@ pub struct ClienteResult {
     pub cpf_cnpj: String,
     pub telefone: Option<String>,
     pub email: Option<String>,
+    #[sqlx(default)]
+    pub uf: Option<String>,
     pub bloqueado: bool,
     pub ativo: bool,
 }

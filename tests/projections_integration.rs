@@ -81,6 +81,7 @@ async fn proj_cliente_reflete_cadastro() -> TestResult {
             cpf_cnpj: "12345678909".into(),
             telefone: None,
             email: None,
+            uf: None,
         })
         .await
         .expect("cadastrar cliente falhou");

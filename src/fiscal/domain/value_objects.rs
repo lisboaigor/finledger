@@ -58,10 +58,15 @@ pub struct ImpostoItem {
     pub c_class_trib: Option<String>,
     #[serde(default)]
     pub cst_ibs_cbs: Option<String>,
-    /// CSOSN (Simples Nacional): "102" quando o perfil configurado é Simples
-    /// sem opção pelo regime regular — a NF não destaca ICMS/PIS/COFINS/ISS.
+    /// CSOSN (Simples Nacional): "102" (tributada sem ST) quando o perfil é
+    /// Simples — a NF usa CSOSN em vez de CST no grupo ICMS.
     #[serde(default)]
     pub csosn: Option<String>,
+    /// CST do ICMS (regimes normais — Lucro Presumido/Real): "00" (tributada
+    /// integralmente) no caso geral sem substituição tributária. O layout da
+    /// NF-e exige CSOSN (Simples) OU CST (normal) no grupo ICMS.
+    #[serde(default)]
+    pub cst_icms: Option<String>,
     /// Custo do DAS (alíquota efetiva do Simples × base) — NÃO é destacado na
     /// NF; entra apenas no custo tributário do vendedor (precificação/BI).
     #[serde(default)]

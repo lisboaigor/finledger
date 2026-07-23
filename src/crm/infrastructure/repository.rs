@@ -25,7 +25,7 @@ impl PostgresClienteRepository {
     pub async fn listar(&self) -> Result<Vec<ClienteResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT cliente_id, nome, cpf_cnpj, telefone, email, bloqueado, ativo
+            "SELECT cliente_id, nome, cpf_cnpj, telefone, email, uf, bloqueado, ativo
              FROM proj_clientes WHERE tenant_id = $1 ORDER BY nome",
         )
         .bind(tenant_id)
@@ -37,7 +37,7 @@ impl PostgresClienteRepository {
     pub async fn buscar(&self, cliente_id: Uuid) -> Result<Option<ClienteResult>, AppError> {
         let tenant_id = current_tenant_id()?;
         sqlx::query_as(
-            "SELECT cliente_id, nome, cpf_cnpj, telefone, email, bloqueado, ativo
+            "SELECT cliente_id, nome, cpf_cnpj, telefone, email, uf, bloqueado, ativo
              FROM proj_clientes WHERE cliente_id = $1 AND tenant_id = $2",
         )
         .bind(cliente_id)

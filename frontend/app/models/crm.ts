@@ -6,6 +6,7 @@ export interface Cliente {
     cpf_cnpj: string
     telefone: string | null
     email: string | null
+    uf: string | null
     bloqueado: boolean
     ativo: boolean
 }
@@ -15,6 +16,8 @@ export interface ClienteDados {
     cpf_cnpj: string
     telefone: string | null
     email: string | null
+    // UF do destinatário — define o CFOP intra/interestadual na NF.
+    uf: string | null
 }
 
 export function listarClientes(apiFetch: ApiFetch) {

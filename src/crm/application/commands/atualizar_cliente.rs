@@ -15,6 +15,8 @@ pub struct AtualizarCliente {
     pub nome: String,
     pub telefone: Option<String>,
     pub email: Option<String>,
+    #[serde(default)]
+    pub uf: Option<String>,
 }
 
 impl CommandHandler<AtualizarCliente> for CrmHandlers {
@@ -23,7 +25,7 @@ impl CommandHandler<AtualizarCliente> for CrmHandlers {
 
     async fn handle(&self, cmd: AtualizarCliente) -> Result<(), AppError> {
         let mut cliente = self.load(ClienteId::from_uuid(cmd.cliente_id)).await?;
-        cliente.atualizar(cmd.nome, cmd.telefone, cmd.email)?;
+        cliente.atualizar(cmd.nome, cmd.telefone, cmd.email, cmd.uf)?;
         self.salvar(&mut cliente).await
     }
 }

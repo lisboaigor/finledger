@@ -13,6 +13,9 @@ pub struct CadastrarCliente {
     pub cpf_cnpj: String,
     pub telefone: Option<String>,
     pub email: Option<String>,
+    // UF do destinatário (opcional) — define o CFOP intra/interestadual na NF.
+    #[serde(default)]
+    pub uf: Option<String>,
 }
 
 impl CommandHandler<CadastrarCliente> for CrmHandlers {
@@ -20,7 +23,8 @@ impl CommandHandler<CadastrarCliente> for CrmHandlers {
     type Error = AppError;
 
     async fn handle(&self, cmd: CadastrarCliente) -> Result<ClienteId, AppError> {
-        let mut cliente = Cliente::cadastrar(cmd.nome, cmd.cpf_cnpj, cmd.telefone, cmd.email)?;
+        let mut cliente =
+            Cliente::cadastrar(cmd.nome, cmd.cpf_cnpj, cmd.telefone, cmd.email, cmd.uf)?;
         let id = *cliente.id();
         self.salvar(&mut cliente).await?;
         Ok(id)

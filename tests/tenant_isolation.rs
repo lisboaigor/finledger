@@ -124,6 +124,7 @@ async fn cliente_de_a_invisivel_para_b() -> TestResult {
             cpf_cnpj: "11111111111".into(),
             telefone: None,
             email: None,
+            uf: None,
         })
         .await
         .expect("cadastrar cliente A falhou");

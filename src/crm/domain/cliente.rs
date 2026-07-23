@@ -8,6 +8,28 @@ use crate::shared::{CpfCnpj, Email, NomeNaoVazio, Telefone};
 
 id_type!(ClienteId);
 
+const UFS: [&str; 27] = [
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR",
+    "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+];
+
+/// UF do destinatário (opcional): usada pelo fiscal para o CFOP (operação
+/// intra/interestadual). Normaliza para maiúsculas e valida contra as 27 UFs.
+fn normalizar_uf(uf: Option<String>) -> DomainResult<Option<String>> {
+    match uf {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() => Ok(None),
+        Some(s) => {
+            let up = s.trim().to_uppercase();
+            if UFS.contains(&up.as_str()) {
+                Ok(Some(up))
+            } else {
+                Err(DomainError::Validation(format!("UF inválida: {s}")))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Entity, AggregateRoot, Serialize, Deserialize)]
 pub struct Cliente {
     #[id]
@@ -21,6 +43,8 @@ pub struct Cliente {
     pub cpf_cnpj: CpfCnpj,
     pub telefone: Option<Telefone>,
     pub email: Option<Email>,
+    #[serde(default)]
+    pub uf: Option<String>,
     pub ativo: bool,
     pub bloqueado: bool,
 }
@@ -31,11 +55,13 @@ impl Cliente {
         cpf_cnpj: String,
         telefone: Option<String>,
         email: Option<String>,
+        uf: Option<String>,
     ) -> DomainResult<Self> {
         let nome = NomeNaoVazio::try_from(nome)?;
         let cpf_cnpj = CpfCnpj::try_from(cpf_cnpj)?;
         let telefone = telefone.map(Telefone::try_from).transpose()?;
         let email = email.map(Email::try_from).transpose()?;
+        let uf = normalizar_uf(uf)?;
 
         let id = ClienteId::new();
         let mut events = AggregateEvents::default();
@@ -43,6 +69,7 @@ impl Cliente {
             cliente_id: id.to_string(),
             nome: nome.to_string(),
             cpf_cnpj: cpf_cnpj.to_string(),
+            uf: uf.clone(),
             occurred_at: Utc::now(),
         });
 
@@ -54,6 +81,7 @@ impl Cliente {
             cpf_cnpj,
             telefone,
             email,
+            uf,
             ativo: true,
             bloqueado: false,
         })
@@ -64,20 +92,24 @@ impl Cliente {
         nome: String,
         telefone: Option<String>,
         email: Option<String>,
+        uf: Option<String>,
     ) -> DomainResult<()> {
         let nome = NomeNaoVazio::try_from(nome)?;
         let telefone = telefone.map(Telefone::try_from).transpose()?;
         let email = email.map(Email::try_from).transpose()?;
+        let uf = normalizar_uf(uf)?;
         self.events.raise(CrmEvent::ClienteAtualizado {
             cliente_id: self.id.to_string(),
             nome: nome.to_string(),
             telefone: telefone.as_ref().map(|t| t.to_string()),
             email: email.as_ref().map(|e| e.to_string()),
+            uf: uf.clone(),
             occurred_at: Utc::now(),
         });
         self.nome = nome;
         self.telefone = telefone;
         self.email = email;
+        self.uf = uf;
         Ok(())
     }
 
@@ -149,8 +181,28 @@ mod tests {
             "123.456.789-09".into(),
             Some("(11) 99999-0000".into()),
             Some("joao@exemplo.com".into()),
+            Some("sp".into()),
         )
         .expect("cliente válido")
+    }
+
+    #[test]
+    fn uf_e_normalizada_e_validada() {
+        let c = cliente_valido();
+        assert_eq!(c.uf.as_deref(), Some("SP"), "normaliza para maiúsculas");
+
+        let r = Cliente::cadastrar(
+            "Ana".into(),
+            "12345678909".into(),
+            None,
+            None,
+            Some("XX".into()),
+        );
+        assert!(matches!(r, Err(DomainError::Validation(_))), "UF inexistente");
+
+        let sem_uf =
+            Cliente::cadastrar("Ana".into(), "12345678909".into(), None, None, None).expect("ok");
+        assert!(sem_uf.uf.is_none());
     }
 
     #[test]
@@ -167,20 +219,20 @@ mod tests {
 
     #[test]
     fn cadastrar_cpf_cnpj_invalido_retorna_erro() {
-        let r = Cliente::cadastrar("João".into(), "123".into(), None, None);
+        let r = Cliente::cadastrar("João".into(), "123".into(), None, None, None);
         assert!(matches!(r, Err(DomainError::Validation(_))));
     }
 
     #[test]
     fn cadastrar_nome_vazio_retorna_erro() {
-        let r = Cliente::cadastrar("   ".into(), "12345678909".into(), None, None);
+        let r = Cliente::cadastrar("   ".into(), "12345678909".into(), None, None, None);
         assert!(matches!(r, Err(DomainError::Validation(_))));
     }
 
     #[test]
     fn atualizar_altera_dados_e_gera_evento() {
         let mut c = cliente_valido();
-        c.atualizar("Maria Souza".into(), None, None)
+        c.atualizar("Maria Souza".into(), None, None, None)
             .expect("atualizar");
         assert_eq!(c.nome.to_string(), "Maria Souza");
         assert!(c.telefone.is_none());
@@ -194,7 +246,7 @@ mod tests {
     fn atualizar_email_invalido_retorna_erro() {
         let mut c = cliente_valido();
         assert!(matches!(
-            c.atualizar("Maria".into(), None, Some("sem-arroba".into())),
+            c.atualizar("Maria".into(), None, Some("sem-arroba".into()), None),
             Err(DomainError::Validation(_))
         ));
     }

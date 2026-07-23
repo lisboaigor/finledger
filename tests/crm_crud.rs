@@ -24,6 +24,7 @@ fn cmd_cadastrar() -> CadastrarCliente {
         cpf_cnpj: "123.456.789-09".into(),
         telefone: Some("(11) 99999-0000".into()),
         email: Some("joao@exemplo.com".into()),
+        uf: Some("sp".into()),
     }
 }
 
@@ -56,6 +57,7 @@ async fn ciclo_completo_de_crud_do_cliente() -> TestResult {
         .expect("cliente deve existir");
         assert_eq!(row.nome, "João da Silva");
         assert_eq!(row.cpf_cnpj, "12345678909");
+        assert_eq!(row.uf.as_deref(), Some("SP"), "UF normalizada e projetada");
         assert!(!row.bloqueado);
         assert!(row.ativo);
 
@@ -67,6 +69,7 @@ async fn ciclo_completo_de_crud_do_cliente() -> TestResult {
                 nome: "Maria Souza".into(),
                 telefone: None,
                 email: Some("maria@exemplo.com".into()),
+                uf: Some("RJ".into()),
             },
         )
         .await
@@ -83,6 +86,7 @@ async fn ciclo_completo_de_crud_do_cliente() -> TestResult {
         .expect("cliente deve existir");
         assert_eq!(row.nome, "Maria Souza");
         assert_eq!(row.email.as_deref(), Some("maria@exemplo.com"));
+        assert_eq!(row.uf.as_deref(), Some("RJ"), "UF atualizada");
 
         // Bloqueio / desbloqueio
         dispatch(
