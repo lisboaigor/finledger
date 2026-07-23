@@ -1,5 +1,5 @@
 use pharos_core::{Repository, RepositoryError};
-use pharos_postgres::{Pool, PostgresRepositoryError};
+use pharos_postgres::{Pool, PostgresRepositoryError, TransactionalRepository};
 
 use crate::shared::tenant::current_tenant_id;
 use crate::shared::tenant_repository::TenantScopedRepository;
@@ -106,5 +106,20 @@ impl Repository<PedidoCompra> for PostgresPedidoCompraRepository {
 
     async fn delete(&self, id: &PedidoCompraId) -> Result<(), Self::Error> {
         self.inner.delete(id).await
+    }
+}
+
+/// Save durável (snapshot + outbox atômicos) — compras é contexto produtor: o
+/// recebimento de mercadoria gera conta a pagar e entrada de estoque via relay
+/// (issue #3).
+impl TransactionalRepository<PedidoCompra> for PostgresPedidoCompraRepository {
+    type Error = PostgresRepositoryError;
+
+    async fn save_in_tx(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        aggregate: &mut PedidoCompra,
+    ) -> Result<(), RepositoryError<Self::Error>> {
+        self.inner.save_in_tx(conn, aggregate).await
     }
 }

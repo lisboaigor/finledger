@@ -3,7 +3,7 @@
 /// CRUD do módulo Orçamentos: fluxo completo de comandos, queries e repositório.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, create_tenant, in_tenant, montar_app, new_tenant_id, setup_db,
+    TestResult, drenar_outbox, create_tenant, in_tenant, montar_app, new_tenant_id, setup_db,
     start_postgres,
 };
 
@@ -98,7 +98,7 @@ async fn ciclo_completo_do_orcamento_ate_aceite() -> TestResult {
         dispatch(&*app.orcamentos, AceitarOrcamento { orcamento_id })
             .await
             .expect("aceitar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Queries
         let lista = query_dispatch(&*app.orcamentos, ListarOrcamentos { apenas_abertos: false, limite: None, offset: None })
@@ -140,7 +140,7 @@ async fn recusar_orcamento_emitido() -> TestResult {
         )
         .await
         .expect("recusar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(&*app.orcamentos, BuscarOrcamento { orcamento_id })
             .await
@@ -193,7 +193,7 @@ async fn aceitar_orcamento_gera_venda_em_andamento_e_marca_convertido() -> TestR
         dispatch(&*app.orcamentos, AceitarOrcamento { orcamento_id })
             .await
             .expect("aceitar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Orçamento marcado como convertido, ligado à venda gerada.
         let orc = query_dispatch(&*app.orcamentos, BuscarOrcamento { orcamento_id })
@@ -385,7 +385,7 @@ async fn desconto_do_orcamento_chega_liquido_na_venda_cr_e_nf() -> TestResult {
         dispatch(&*app.orcamentos, AceitarOrcamento { orcamento_id })
             .await
             .expect("aceitar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // A venda EmAndamento gerada já carrega o desconto e o total líquido.
         let vendas = query_dispatch(
@@ -422,7 +422,7 @@ async fn desconto_do_orcamento_chega_liquido_na_venda_cr_e_nf() -> TestResult {
         )
         .await
         .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let (total_venda, desconto_venda): (i64, i64) = sqlx::query_as(
             "SELECT total_centavos, desconto_centavos FROM proj_vendas WHERE venda_id = $1",

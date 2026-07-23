@@ -12,7 +12,7 @@ pub struct ItemOrcamentoSnapshot {
     pub preco_unitario_centavos: i64,
 }
 
-#[derive(Debug, Clone, DomainEvent)]
+#[derive(Debug, Clone, DomainEvent, Serialize, Deserialize)]
 pub enum OrcamentoEvent {
     OrcamentoCriado {
         #[aggregate_id]

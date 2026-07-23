@@ -2012,7 +2012,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pharos-app"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "metrics",
@@ -2030,7 +2030,7 @@ dependencies = [
 [[package]]
 name = "pharos-axum"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "axum",
  "http",
@@ -2043,7 +2043,7 @@ dependencies = [
 [[package]]
 name = "pharos-core"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "thiserror 2.0.18",
@@ -2052,7 +2052,7 @@ dependencies = [
 [[package]]
 name = "pharos-es"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "pharos-core",
@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "pharos-macros"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2074,7 +2074,7 @@ dependencies = [
 [[package]]
 name = "pharos-messaging"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "fastrand",
@@ -2088,7 +2088,7 @@ dependencies = [
 [[package]]
 name = "pharos-postgres"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "metrics",
@@ -2107,7 +2107,7 @@ dependencies = [
 [[package]]
 name = "pharos-saga"
 version = "0.2.0"
-source = "git+https://github.com/lisboaigor/pharos-rs#4c6110964afeb99ab58d76ebdc40c4e5a3eb342a"
+source = "git+https://github.com/lisboaigor/pharos-rs#0717c31f27862cdd3b6139d7f5a34528f9ed3c98"
 dependencies = [
  "chrono",
  "thiserror 2.0.18",

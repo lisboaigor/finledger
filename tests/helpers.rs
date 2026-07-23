@@ -168,3 +168,47 @@ pub fn montar_app(pool: &Pool) -> finledger::bootstrap::handlers::Handlers {
 pub async fn aguardar_projecoes() {
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 }
+
+/// Drena o outbox transacional até esvaziar, despachando os efeitos que o
+/// caminho durável (`salvar_aggregate_duravel`) enfileirou — projeções e
+/// handlers cross-context dos contextos produtores (vendas/orçamentos/compras).
+///
+/// Substitui `aguardar_projecoes` nos testes desses contextos: em produção o
+/// relay faz isto em background; no teste chamamos aqui após a ação e antes dos
+/// asserts. Autossuficiente — monta a mesma fiação de produção (handlers +
+/// projeções + decoders) num bus próprio; o escopo de tenant de cada efeito vem
+/// do header da mensagem (não precisa estar dentro de `in_tenant`). Idempotente:
+/// o inbox deduplica, então pode ser chamado várias vezes.
+#[allow(dead_code)]
+pub async fn drenar_outbox(pool: &Pool) -> TestResult {
+    use std::sync::Arc;
+
+    use finledger::auth::AuthConfig;
+    use finledger::bootstrap::outbox_relay::{RelayPublisher, registrar_decoders};
+    use finledger::bootstrap::{handlers::Handlers, repositories::Repositories};
+    use pharos_app::{EventBus, OutboxDispatcher};
+    use pharos_postgres::PostgresOutboxRepository;
+
+    let bus = EventBus::new();
+    let auth = Arc::new(AuthConfig::new("segredo-de-teste".into()));
+    // `handlers` precisa viver enquanto drenamos: o bus guarda Arc clones dele.
+    let handlers = Handlers::new(Repositories::new(pool), pool.clone(), bus.clone(), auth);
+    finledger::bootstrap::events::register(&bus, &handlers, pool.clone());
+    finledger::bootstrap::projections::register(&bus, pool.clone());
+    registrar_decoders(&bus);
+
+    let dispatcher = OutboxDispatcher::new(
+        PostgresOutboxRepository::new(pool.clone()),
+        RelayPublisher::new(bus.clone(), pool.clone()),
+    );
+    // Drena até um lote sem publicações: cobre a cadeia de efeitos (ex.:
+    // orçamento aceito → venda durável → CR/NF/estoque).
+    loop {
+        let r = dispatcher.dispatch_pending(1000).await;
+        if r.published == 0 {
+            break;
+        }
+    }
+    drop(handlers);
+    Ok(())
+}

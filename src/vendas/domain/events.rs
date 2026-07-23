@@ -15,7 +15,7 @@ pub struct ItemVendaSnapshot {
     pub preco_unitario_centavos: i64,
 }
 
-#[derive(Debug, Clone, DomainEvent)]
+#[derive(Debug, Clone, DomainEvent, Serialize, Deserialize)]
 pub enum VendaEvent {
     VendaIniciada {
         #[aggregate_id]

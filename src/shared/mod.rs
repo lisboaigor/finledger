@@ -1,8 +1,15 @@
-use pharos_app::{ApplicationError, EventBus, save_and_publish};
-use pharos_core::{AggregateRoot, DomainError, DomainResult, Repository, ValueObject};
+use std::sync::{Arc, OnceLock};
+
+use pharos_app::{ApplicationError, EventBus, Message, save_and_publish};
+use pharos_core::{
+    AggregateRoot, DomainError, DomainEvent, DomainResult, Repository, RepositoryError, ValueObject,
+};
+use pharos_postgres::{Pool, SaveAndEnqueueError, TransactionalRepository, save_and_enqueue_in};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 use crate::error::AppError;
+use crate::shared::tenant::current_tenant_id;
 
 pub mod tenant;
 pub mod tenant_repository;
@@ -58,6 +65,92 @@ where
             ApplicationError::ConcurrencyConflict { .. } => AppError::Conflict,
             e => AppError::infra(e),
         })
+}
+
+/// Sinalizador que "cutuca" o relay do outbox a drenar imediatamente após um
+/// commit durável, em vez de esperar o próximo tick — mantém a leitura
+/// pós-escrita (projeções) na casa dos milissegundos. Setado uma vez no
+/// bootstrap; ausente em testes, que drenam o outbox manualmente
+/// (`tests/helpers::drenar_outbox`).
+static RELAY_KICK: OnceLock<Arc<Notify>> = OnceLock::new();
+
+/// Registra o sinalizador do relay (chamado no bootstrap). Idempotente: só o
+/// primeiro registro vale.
+pub fn registrar_relay_kick(notify: Arc<Notify>) {
+    let _ = RELAY_KICK.set(notify);
+}
+
+fn cutucar_relay() {
+    if let Some(n) = RELAY_KICK.get() {
+        n.notify_one();
+    }
+}
+
+/// Liga o caminho durável (outbox + relay). Desligado via
+/// `OUTBOX_RELAY_ATIVO=false`/`0`, recai no `salvar_aggregate` síncrono legado —
+/// interruptor de rollout para produção.
+fn outbox_ativo() -> bool {
+    std::env::var("OUTBOX_RELAY_ATIVO")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true)
+}
+
+/// Persiste um agregado **produtor** de forma durável: o snapshot e os eventos
+/// (como mensagens de outbox) commitam na MESMA transação; o relay
+/// (`bootstrap::outbox_relay`) despacha depois as projeções e os efeitos
+/// cross-context. Fecha a janela de perda de eventos da issue #3 — um crash
+/// após o commit não perde mais a conta a receber, a NF nem a baixa de estoque.
+///
+/// Com `OUTBOX_RELAY_ATIVO=false` recai no [`salvar_aggregate`] síncrono legado.
+///
+/// `topic` roteia o evento no relay e DEVE casar com o `register_decoder`
+/// registrado no bootstrap (ex.: `"VendaEvent"`).
+pub async fn salvar_aggregate_duravel<A, R>(
+    pool: &Pool,
+    repo: &R,
+    bus: &EventBus,
+    aggregate: &mut A,
+    topic: &'static str,
+) -> Result<(), AppError>
+where
+    A: AggregateRoot,
+    A::Event: Serialize,
+    R: Repository<A> + TransactionalRepository<A>,
+{
+    if !outbox_ativo() {
+        return salvar_aggregate(repo, bus, aggregate).await;
+    }
+
+    // Surfa erro de serialização ANTES de tocar o banco (nada persistido) — e
+    // garante que o `map_event` abaixo nunca produza payload vazio por falha.
+    for evento in aggregate.pending_events() {
+        serde_json::to_vec(evento).map_err(AppError::infra)?;
+    }
+
+    let tenant_id = current_tenant_id()?.to_string();
+    let map_event = |evento: &A::Event| {
+        Message::new(
+            topic,
+            serde_json::to_vec(evento).unwrap_or_default(),
+            "application/json",
+        )
+        .with_key(evento.aggregate_id())
+        .with_header("event_type", evento.event_type())
+        .with_header("tenant_id", tenant_id.clone())
+    };
+
+    save_and_enqueue_in(pool, repo, aggregate, map_event)
+        .await
+        .map_err(|e| match e {
+            SaveAndEnqueueError::Repository(RepositoryError::ConcurrencyConflict { .. }) => {
+                AppError::Conflict
+            }
+            other => AppError::infra(other),
+        })?;
+
+    // Efeitos são despachados pelo relay; cutuca para drenar já.
+    cutucar_relay();
+    Ok(())
 }
 
 /// Valor monetário em centavos de real. Evita imprecisão de ponto flutuante.

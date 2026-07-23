@@ -4,7 +4,7 @@
 /// com o total do tenant), giro por produto e score de saúde (bi.score_saude).
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, create_tenant, in_tenant, montar_app, setup_bi, setup_db,
+    TestResult, drenar_outbox, create_tenant, in_tenant, montar_app, setup_bi, setup_db,
     start_postgres,
 };
 
@@ -144,7 +144,7 @@ async fn giro_reflete_vendas_e_saldo() -> TestResult {
         dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
             .await
             .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let giro = app.precificacao.listar_giro_produtos().await.expect("giro");
         let linha = giro
@@ -235,7 +235,7 @@ async fn margem_liquida_desconta_impostos_da_nf() -> TestResult {
         dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
             .await
             .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // ETL: carrega a venda (bruta) e reconcilia os impostos da NF (líquida).
         let _: serde_json::Value = sqlx::query_scalar("SELECT bi.executar_etl()")
@@ -361,7 +361,7 @@ async fn score_saude_compoe_metricas_do_tenant() -> TestResult {
         dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
             .await
             .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // ETL popula fato_vendas_item/analise_produtos usados pelo score.
         let _: serde_json::Value = sqlx::query_scalar("SELECT bi.executar_etl()")
@@ -496,7 +496,7 @@ async fn devolucao_parcial_gera_fato_negativo_datado_e_mantem_venda_bruta() -> T
         dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
             .await
             .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let item_id: Uuid =
             sqlx::query_scalar("SELECT item_id FROM proj_vendas_itens WHERE venda_id = $1")
@@ -516,7 +516,7 @@ async fn devolucao_parcial_gera_fato_negativo_datado_e_mantem_venda_bruta() -> T
         )
         .await
         .expect("devolver");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let _: serde_json::Value = sqlx::query_scalar("SELECT bi.executar_etl()")
             .fetch_one(&pool2)
@@ -650,7 +650,7 @@ async fn desconto_global_e_rateado_no_fato_bruto_e_no_negativo_de_devolucao() ->
         dispatch(&*app.vendas, ConfirmarVenda { venda_id: venda_id.as_uuid() })
             .await
             .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let item_id: Uuid =
             sqlx::query_scalar("SELECT item_id FROM proj_vendas_itens WHERE venda_id = $1")
@@ -688,7 +688,7 @@ async fn desconto_global_e_rateado_no_fato_bruto_e_no_negativo_de_devolucao() ->
         )
         .await
         .expect("devolver");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let _: serde_json::Value = sqlx::query_scalar("SELECT bi.executar_etl()")
             .fetch_one(&pool2)

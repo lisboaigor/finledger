@@ -3,7 +3,7 @@
 /// CRUD do módulo Vendas: fluxo completo de comandos, queries e repositório.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, in_tenant, montar_app, new_tenant_id, seed_produto, setup_db,
+    TestResult, drenar_outbox, in_tenant, montar_app, new_tenant_id, seed_produto, setup_db,
     start_postgres,
 };
 
@@ -114,7 +114,7 @@ async fn ciclo_completo_da_venda_com_queries() -> TestResult {
         )
         .await
         .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Queries
         let lista = query_dispatch(
@@ -180,7 +180,7 @@ async fn cancelar_venda_em_andamento() -> TestResult {
         )
         .await
         .expect("cancelar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(
             &*app.vendas,
@@ -415,7 +415,7 @@ async fn preco_adulterado_no_payload_e_substituido_pelo_preco_de_catalogo() -> T
         )
         .await
         .expect("adicionar item");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(
             &*app.vendas,
@@ -538,7 +538,7 @@ async fn desconto_maior_que_o_total_da_venda_retorna_erro() -> TestResult {
         )
         .await
         .expect("desconto válido");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(
             &*app.vendas,

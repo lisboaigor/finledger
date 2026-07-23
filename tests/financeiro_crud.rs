@@ -4,7 +4,7 @@
 /// cross-BC, pagamentos, abatimento, estorno, devoluções e query handlers.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, in_tenant, montar_app, new_tenant_id, seed_produto, setup_db,
+    TestResult, drenar_outbox, in_tenant, montar_app, new_tenant_id, seed_produto, setup_db,
     start_postgres,
 };
 
@@ -122,7 +122,7 @@ async fn conta_receber_pagamento_parcial_e_quitacao() -> TestResult {
     let pool_seed = pool.clone();
     in_tenant(tenant_id, async move {
         let venda_id = confirmar_venda_a_prazo(&app, &pool_seed, tenant_id).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -143,7 +143,7 @@ async fn conta_receber_pagamento_parcial_e_quitacao() -> TestResult {
         )
         .await
         .expect("pagamento parcial");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
         let row = query_dispatch(
             &*app.financeiro,
             BuscarContaReceber {
@@ -165,7 +165,7 @@ async fn conta_receber_pagamento_parcial_e_quitacao() -> TestResult {
         )
         .await
         .expect("quitação");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
         let row = query_dispatch(
             &*app.financeiro,
             BuscarContaReceber {
@@ -192,7 +192,7 @@ async fn estornar_conta_receber() -> TestResult {
     let pool_seed = pool.clone();
     in_tenant(tenant_id, async move {
         confirmar_venda_a_prazo(&app, &pool_seed, tenant_id).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -208,7 +208,7 @@ async fn estornar_conta_receber() -> TestResult {
         )
         .await
         .expect("estornar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let row = query_dispatch(&*app.financeiro, BuscarContaReceber { conta_id })
             .await
@@ -230,7 +230,7 @@ async fn estorno_manual_de_conta_com_recebimento_e_rejeitado() -> TestResult {
     let pool_seed = pool.clone();
     in_tenant(tenant_id, async move {
         confirmar_venda_a_prazo(&app, &pool_seed, tenant_id).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -259,7 +259,7 @@ async fn estorno_manual_de_conta_com_recebimento_e_rejeitado() -> TestResult {
             matches!(r, Err(DispatchError::Handler(AppError::Domain(_)))),
             "estorno de conta com recebimento deve ser bloqueado, veio {r:?}"
         );
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let row = query_dispatch(&*app.financeiro, BuscarContaReceber { conta_id })
             .await
@@ -282,7 +282,7 @@ async fn venda_a_vista_cria_conta_ja_liquidada() -> TestResult {
     let pool_seed = pool.clone();
     in_tenant(tenant_id, async move {
         let (venda_id, _) = confirmar_venda(&app, &pool_seed, tenant_id, FormaPagamento::Pix).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -368,7 +368,7 @@ async fn cartao_credito_3x_cria_tres_parcelas_com_sobra_na_ultima() -> TestResul
         )
         .await
         .expect("confirmar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Listagem ordenada por vencimento = ordem das parcelas.
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
@@ -412,7 +412,7 @@ async fn devolucao_total_com_conta_paga_gera_reembolso() -> TestResult {
             FormaPagamento::Prazo { dias: 30 },
         )
         .await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Cliente quita a conta antes de devolver.
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
@@ -428,7 +428,7 @@ async fn devolucao_total_com_conta_paga_gera_reembolso() -> TestResult {
         )
         .await
         .expect("quitar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Devolução TOTAL (as 2 unidades).
         dispatch(
@@ -444,7 +444,7 @@ async fn devolucao_total_com_conta_paga_gera_reembolso() -> TestResult {
         )
         .await
         .expect("devolver");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let row = query_dispatch(&*app.financeiro, BuscarContaReceber { conta_id })
             .await
@@ -491,7 +491,7 @@ async fn devolucao_parcial_abate_saldo_automaticamente() -> TestResult {
             FormaPagamento::Prazo { dias: 30 },
         )
         .await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Devolve 1 das 2 unidades (15000 dos 30000).
         dispatch(
@@ -507,7 +507,7 @@ async fn devolucao_parcial_abate_saldo_automaticamente() -> TestResult {
         )
         .await
         .expect("devolver");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -534,7 +534,7 @@ async fn devolucao_parcial_abate_saldo_automaticamente() -> TestResult {
         )
         .await
         .expect("quitar saldo");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
         let row = query_dispatch(
             &*app.financeiro,
             BuscarContaReceber {
@@ -562,7 +562,7 @@ async fn devolucao_parcial_de_venda_a_vista_gera_reembolso_do_excedente() -> Tes
         // À vista: conta nasce liquidada (30000 recebidos), saldo em aberto 0.
         let (venda_id, item_id) =
             confirmar_venda(&app, &pool_seed, tenant_id, FormaPagamento::Dinheiro).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         dispatch(
             &*app.vendas,
@@ -577,7 +577,7 @@ async fn devolucao_parcial_de_venda_a_vista_gera_reembolso_do_excedente() -> Tes
         )
         .await
         .expect("devolver");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         // Sem saldo em aberto, o valor devolvido vira reembolso integral.
         let pagar = query_dispatch(&*app.financeiro, ListarContasPagar::default())
@@ -601,7 +601,7 @@ async fn abatimento_manual_reflete_na_projecao_e_respeita_saldo() -> TestResult 
     let pool_seed = pool.clone();
     in_tenant(tenant_id, async move {
         confirmar_venda_a_prazo(&app, &pool_seed, tenant_id).await;
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -634,7 +634,7 @@ async fn abatimento_manual_reflete_na_projecao_e_respeita_saldo() -> TestResult 
         )
         .await
         .expect("abater");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let row = query_dispatch(&*app.financeiro, BuscarContaReceber { conta_id })
             .await
@@ -671,9 +671,9 @@ async fn reprocessar_venda_confirmada_nao_duplica_conta() -> TestResult {
 
         // Entrega at-least-once simulada: o MESMO evento processado duas vezes.
         handler.handle(&evento).await.expect("primeira entrega");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
         handler.handle(&evento).await.expect("segunda entrega");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasReceber::default())
             .await
@@ -741,7 +741,7 @@ async fn conta_pagar_criada_no_recebimento_e_quitada() -> TestResult {
         )
         .await
         .expect("receber");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let contas = query_dispatch(&*app.financeiro, ListarContasPagar::default())
             .await
@@ -760,7 +760,7 @@ async fn conta_pagar_criada_no_recebimento_e_quitada() -> TestResult {
         )
         .await
         .expect("pagar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let row = query_dispatch(
             &*app.financeiro,

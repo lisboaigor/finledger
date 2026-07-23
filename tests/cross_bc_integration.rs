@@ -6,8 +6,8 @@
 /// MercadoriaRecebida → EstoqueEntrada (EstoqueComprasEventHandler)
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, in_tenant, new_tenant_id, seed_produto, setup_db,
-    start_postgres,
+    TestResult, aguardar_projecoes, drenar_outbox, in_tenant, new_tenant_id, seed_produto,
+    setup_db, start_postgres,
 };
 
 use std::sync::Arc;
@@ -88,6 +88,7 @@ async fn montar_handlers(
     let compras = Arc::new(ComprasHandlers::new(
         Arc::new(PostgresPedidoCompraRepository::new(pool.clone())),
         bus.clone(),
+        pool.clone(),
     ));
 
     bus.register(FinanceiroVendaEventHandler {
@@ -175,7 +176,9 @@ async fn venda_confirmada_gera_conta_receber_e_nf() -> TestResult {
     })
     .await;
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Os efeitos cross-context (CR/NF/baixa) agora saem pelo outbox durável:
+    // drena como o relay faria em produção.
+    drenar_outbox(&pool).await?;
 
     let conta_receber_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM proj_contas_receber WHERE venda_id = $1")
@@ -256,7 +259,9 @@ async fn mercadoria_recebida_incrementa_estoque() -> TestResult {
     })
     .await;
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Os efeitos cross-context (CR/NF/baixa) agora saem pelo outbox durável:
+    // drena como o relay faria em produção.
+    drenar_outbox(&pool).await?;
 
     let saldo: Option<i32> =
         sqlx::query_scalar("SELECT quantidade FROM proj_saldo_estoque WHERE produto_id = $1")

@@ -1,5 +1,5 @@
 use pharos_core::{Repository, RepositoryError};
-use pharos_postgres::{Pool, PostgresRepositoryError};
+use pharos_postgres::{Pool, PostgresRepositoryError, TransactionalRepository};
 
 use crate::shared::tenant::current_tenant_id;
 use crate::shared::tenant_repository::TenantScopedRepository;
@@ -161,5 +161,19 @@ impl Repository<Venda> for PostgresVendaRepository {
 
     async fn delete(&self, id: &VendaId) -> Result<(), Self::Error> {
         self.inner.delete(id).await
+    }
+}
+
+/// Save durável (snapshot + outbox na mesma transação) — venda é contexto
+/// produtor: seus eventos disparam CR/NF/baixa de estoque via relay (issue #3).
+impl TransactionalRepository<Venda> for PostgresVendaRepository {
+    type Error = PostgresRepositoryError;
+
+    async fn save_in_tx(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        aggregate: &mut Venda,
+    ) -> Result<(), RepositoryError<Self::Error>> {
+        self.inner.save_in_tx(conn, aggregate).await
     }
 }

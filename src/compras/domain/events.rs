@@ -9,7 +9,7 @@ pub struct ItemPedidoSnapshot {
     pub custo_unitario_centavos: i64,
 }
 
-#[derive(Debug, Clone, DomainEvent)]
+#[derive(Debug, Clone, DomainEvent, Serialize, Deserialize)]
 pub enum ComprasEvent {
     PedidoCompraGerado {
         #[aggregate_id]

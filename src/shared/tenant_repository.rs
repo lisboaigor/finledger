@@ -10,7 +10,9 @@ use std::marker::PhantomData;
 use std::str::FromStr;
 
 use pharos_core::{AggregateRoot, Entity, Repository, RepositoryError};
-use pharos_postgres::{Pool, PostgresRepositoryError, TenantJsonRepository};
+use pharos_postgres::{
+    Pool, PostgresRepositoryError, TenantJsonRepository, TransactionalRepository,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -66,5 +68,30 @@ where
 
     async fn delete(&self, id: &A::Id) -> Result<(), Self::Error> {
         self.scoped()?.delete(id).await
+    }
+}
+
+/// Habilita o save durável (`save_and_enqueue_in`): a persistência do snapshot e
+/// os inserts no outbox rodam na MESMA transação. Delega ao `save_in_tx` do
+/// `TenantJsonRepository` já escopado por tenant — a conexão da tx vem do pool
+/// com a GUC `app.tenant_id` setada no `before_acquire`, então a RLS de
+/// `pharos_tenant_aggregates` continua valendo dentro da transação.
+impl<A> TransactionalRepository<A> for TenantScopedRepository<A>
+where
+    A: AggregateRoot + Serialize + DeserializeOwned + Send + Sync + 'static,
+    <A as Entity>::Id: Display + FromStr + Send + Sync + 'static,
+    <<A as Entity>::Id as FromStr>::Err: Display + Send + Sync + 'static,
+{
+    type Error = PostgresRepositoryError;
+
+    async fn save_in_tx(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        aggregate: &mut A,
+    ) -> Result<(), RepositoryError<Self::Error>> {
+        self.scoped()
+            .map_err(RepositoryError::Storage)?
+            .save_in_tx(conn, aggregate)
+            .await
     }
 }

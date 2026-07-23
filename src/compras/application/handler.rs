@@ -1,20 +1,22 @@
 use std::sync::Arc;
 
 use pharos_app::EventBus;
+use pharos_postgres::Pool;
 
 use crate::compras::domain::pedido_compra::{PedidoCompra, PedidoCompraId};
 use crate::compras::infrastructure::repository::PostgresPedidoCompraRepository;
 use crate::error::AppError;
-use crate::shared::{load_aggregate, salvar_aggregate};
+use crate::shared::{load_aggregate, salvar_aggregate_duravel};
 
 pub struct ComprasHandlers {
     pub(crate) repo: Arc<PostgresPedidoCompraRepository>,
     pub(crate) bus: EventBus,
+    pub(crate) pool: Pool,
 }
 
 impl ComprasHandlers {
-    pub fn new(repo: Arc<PostgresPedidoCompraRepository>, bus: EventBus) -> Self {
-        Self { repo, bus }
+    pub fn new(repo: Arc<PostgresPedidoCompraRepository>, bus: EventBus, pool: Pool) -> Self {
+        Self { repo, bus, pool }
     }
 
     pub(crate) async fn load(&self, id: PedidoCompraId) -> Result<PedidoCompra, AppError> {
@@ -22,6 +24,6 @@ impl ComprasHandlers {
     }
 
     pub(crate) async fn salvar(&self, pedido: &mut PedidoCompra) -> Result<(), AppError> {
-        salvar_aggregate(&*self.repo, &self.bus, pedido).await
+        salvar_aggregate_duravel(&self.pool, &*self.repo, &self.bus, pedido, "ComprasEvent").await
     }
 }

@@ -51,7 +51,7 @@ async fn arquiva_lista_na_lixeira_e_restaura() -> TestResult {
         .await
         .expect("criar orçamento");
 
-        helpers::aguardar_projecoes().await;
+        helpers::drenar_outbox(&pool2).await.expect("drenar outbox");
 
         // Antes do prazo: nada arquivado, tudo listado normalmente.
         let vendas = query_dispatch(&*app.vendas, ListarVendas { produto_busca: None, apenas_abertas: false, limite: None, offset: None })
@@ -155,7 +155,7 @@ async fn sem_prazo_configurado_nada_e_arquivado() -> TestResult {
         )
         .await
         .expect("iniciar venda");
-        helpers::aguardar_projecoes().await;
+        helpers::drenar_outbox(&pool2).await.expect("drenar outbox");
 
         sqlx::query(
             "UPDATE proj_vendas SET atualizado_em = NOW() - INTERVAL '400 days' WHERE venda_id = $1",

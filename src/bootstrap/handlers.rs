@@ -120,7 +120,7 @@ impl Handlers {
             vendas: Arc::new(VendasHandlers::new(repos.vendas, bus.clone(), pool.clone())),
             fornecedores: Arc::new(FornecedoresHandlers::new(repos.fornecedores, bus.clone())),
             orcamentos,
-            compras: Arc::new(ComprasHandlers::new(repos.pedidos, bus.clone())),
+            compras: Arc::new(ComprasHandlers::new(repos.pedidos, bus.clone(), pool.clone())),
             estoque,
             financeiro,
             fiscal,

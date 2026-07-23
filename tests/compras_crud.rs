@@ -5,7 +5,7 @@
 /// cross_bc_integration — aqui o foco é o ciclo do pedido e as queries.
 mod helpers;
 use helpers::{
-    TestResult, aguardar_projecoes, in_tenant, montar_app, new_tenant_id, setup_db, start_postgres,
+    TestResult, drenar_outbox, in_tenant, montar_app, new_tenant_id, setup_db, start_postgres,
 };
 
 use pharos_app::{DispatchError, dispatch, query_dispatch};
@@ -41,7 +41,7 @@ async fn ciclo_completo_do_pedido_de_compra() -> TestResult {
         let pedido_id = dispatch(&*app.compras, cmd_gerar(produto_id))
             .await
             .expect("gerar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let lista = query_dispatch(&*app.compras, ListarPedidosCompra::default())
             .await
@@ -88,7 +88,7 @@ async fn ciclo_completo_do_pedido_de_compra() -> TestResult {
         )
         .await
         .expect("receber");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(
             &*app.compras,
@@ -140,7 +140,7 @@ async fn cancelar_pedido_pendente() -> TestResult {
         )
         .await
         .expect("cancelar");
-        aguardar_projecoes().await;
+        drenar_outbox(&pool).await.expect("drenar outbox");
 
         let detalhes = query_dispatch(
             &*app.compras,

@@ -6,7 +6,7 @@ use pharos_postgres::Pool;
 use crate::error::AppError;
 use crate::orcamentos::domain::orcamento::{Orcamento, OrcamentoId};
 use crate::orcamentos::infrastructure::repository::PostgresOrcamentoRepository;
-use crate::shared::{load_aggregate, salvar_aggregate};
+use crate::shared::{load_aggregate, salvar_aggregate_duravel};
 use crate::tenants::repository::TenantRepository;
 
 pub struct OrcamentosHandlers {
@@ -36,7 +36,8 @@ impl OrcamentosHandlers {
     }
 
     pub(crate) async fn salvar(&self, orcamento: &mut Orcamento) -> Result<(), AppError> {
-        salvar_aggregate(&*self.repo, &self.bus, orcamento).await
+        salvar_aggregate_duravel(&self.pool, &*self.repo, &self.bus, orcamento, "OrcamentoEvent")
+            .await
     }
 
     /// Restaura um orçamento da lixeira. Mexe só na visibilidade da projeção —

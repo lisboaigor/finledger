@@ -4,7 +4,7 @@ use pharos_app::EventBus;
 use pharos_postgres::Pool;
 
 use crate::error::AppError;
-use crate::shared::{load_aggregate, salvar_aggregate};
+use crate::shared::{load_aggregate, salvar_aggregate_duravel};
 use crate::vendas::domain::venda::{Venda, VendaId};
 use crate::vendas::infrastructure::repository::PostgresVendaRepository;
 
@@ -24,7 +24,7 @@ impl VendasHandlers {
     }
 
     pub(crate) async fn salvar(&self, venda: &mut Venda) -> Result<(), AppError> {
-        salvar_aggregate(&*self.repo, &self.bus, venda).await
+        salvar_aggregate_duravel(&self.pool, &*self.repo, &self.bus, venda, "VendaEvent").await
     }
 
     /// Restaura uma venda da lixeira. Mexe só na visibilidade da projeção —
