@@ -222,14 +222,6 @@ function tempoRelativo(iso: string): string {
                 <Clock class="mr-1 inline size-3.5" />{{ sugestaoValida.ajusteGiro.motivo }}
             </p>
 
-            <!-- Custos fixos configurados mas fora da conta (falta vendas/mês) -->
-            <MessageBox v-if="sugestaoValida.custoFixoSemRateioCentavos" severity="warn">
-                Seus custos fixos ({{ formatCentavos(sugestaoValida.custoFixoSemRateioCentavos) }}/mês) NÃO
-                entraram nesta conta: falta informar o faturamento esperado por mês em
-                <NuxtLink to="/configuracoes" class="underline font-medium">Configurações</NuxtLink> — é ele
-                que define a fração do preço que cobre os custos fixos.
-            </MessageBox>
-
             <!-- Passo a passo do cálculo -->
             <button type="button" class="painel-toggle" @click="explicacaoAberta = !explicacaoAberta">
                 <ChevronDown v-if="explicacaoAberta" class="size-3.5" />

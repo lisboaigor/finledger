@@ -23,7 +23,8 @@ export interface LinhaAnalisePreco {
 export function useAnalisePrecosViewModel() {
     const { apiFetch, apiErrorMessage } = useApi()
     const { notifyError } = useNotify()
-    const { sugerirPreco, lucroLiquido, giroDoProduto, garantirCarregado, config } = useMargens()
+    const { sugerirPreco, lucroLiquido, giroDoProduto, garantirCarregado, config, coberturaCustosFixos } =
+        useMargens()
 
     const loading = ref(true)
     const produtos = ref<Produto[]>([])
@@ -86,6 +87,12 @@ export function useAnalisePrecosViewModel() {
         abaixoDoAlvo.value.reduce((s, l) => s + l.ganhoPotencialCentavos, 0),
     )
 
+    /** Cobertura dos custos fixos no nível da loja: custo fixo é custo de
+     * período, recuperado pela margem de contribuição do volume — não é rateado
+     * no preço de cada item. Este painel diz se as margens × volume esperado
+     * cobrem os custos fixos, e mostra o ponto de equilíbrio. */
+    const cobertura = computed(() => coberturaCustosFixos(produtos.value))
+
     // Passo a passo por produto (dialog)
     const detalhe = ref<LinhaAnalisePreco | null>(null)
 
@@ -97,6 +104,7 @@ export function useAnalisePrecosViewModel() {
         abaixoDoAlvo,
         encalhados,
         ganhoPotencialTotal,
+        cobertura,
         detalhe,
     })
 }

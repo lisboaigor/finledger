@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { TriangleAlert } from '@lucide/vue'
 import type { SugestaoPreco } from '~/composables/useMargens'
 
 /** Passo a passo do preço sugerido — os números e argumentos que levaram ao
@@ -13,7 +12,6 @@ const props = defineProps<{
 }>()
 
 const { formatCentavos } = useFormat()
-const { config, custosFixosItens } = useMargens()
 
 const fmtPct = (pct: number) => `${Number(pct.toFixed(2))}%`
 
@@ -23,24 +21,14 @@ const origemMargemLabel = computed(() => {
     return 'padrão da loja'
 })
 
-/** Custo fixo em R$ por unidade — só quando definido explicitamente no
- * produto ou na categoria (override). */
-const explicacaoCustoFixo = computed(() => {
+/** Custo DIRETO por unidade (embalagem, frete-compra) em R$ — só quando
+ * definido explicitamente no produto ou na categoria (override). */
+const explicacaoCustoDireto = computed(() => {
     const s = props.sugestao
-    if (s.custoFixoUnitarioCentavos <= 0) return null
-    if (s.origemCustoFixo === 'produto') return { rotulo: 'valor definido neste produto' }
-    if (s.origemCustoFixo === 'categoria') return { rotulo: 'valor definido na categoria' }
+    if (s.custoDiretoUnitarioCentavos <= 0) return null
+    if (s.origemCustoDireto === 'produto') return { rotulo: 'valor definido neste produto' }
+    if (s.origemCustoDireto === 'categoria') return { rotulo: 'valor definido na categoria' }
     return { rotulo: '' }
-})
-
-/** Rateio proporcional padrão da loja: custos fixos como % do preço
- * (fixos ÷ faturamento mensal estimado), com os itens discriminados. */
-const rateioProporcional = computed(() => {
-    const pct = props.sugestao.descontos.find((d) => d.nome === 'Custos fixos')?.pct
-    const fixos = config.value.custosFixosMensaisCentavos
-    const faturamento = config.value.faturamentoMensalCentavos
-    if (!pct || fixos == null || faturamento == null) return null
-    return { pct, fixos, faturamento, itens: custosFixosItens.value }
 })
 
 const descontosPct = computed(() => props.sugestao.descontos.reduce((s, d) => s + d.pct, 0))
@@ -51,8 +39,8 @@ const decomposicao = computed(() => {
     const s = props.sugestao
     const partes = [
         { nome: 'Pagar o produto', valor: props.custoCentavos },
-        ...(s.custoFixoUnitarioCentavos > 0
-            ? [{ nome: 'Cobrir custos fixos', valor: s.custoFixoUnitarioCentavos }]
+        ...(s.custoDiretoUnitarioCentavos > 0
+            ? [{ nome: 'Custo direto por unidade', valor: s.custoDiretoUnitarioCentavos }]
             : []),
         ...s.descontos.map((d) => ({ nome: d.nome, valor: Math.round((s.precoCentavos * d.pct) / 100) })),
     ]
@@ -61,12 +49,11 @@ const decomposicao = computed(() => {
 })
 
 const numeroPasso = computed(() => {
-    // Passos exibidos variam (custo fixo e giro são opcionais) — numeração dinâmica.
+    // Passos exibidos variam (custo direto e giro são opcionais) — numeração dinâmica.
     let n = 1
     return {
         custo: n++,
-        fixo: props.sugestao.custoFixoUnitarioCentavos > 0 ? n++ : null,
-        rateio: rateioProporcional.value ? n++ : null,
+        direto: props.sugestao.custoDiretoUnitarioCentavos > 0 ? n++ : null,
         descontos: props.sugestao.descontos.length ? n++ : null,
         margem: n++,
         giro: props.sugestao.ajusteGiro ? n++ : null,
@@ -85,44 +72,16 @@ const numeroPasso = computed(() => {
             </span>
         </li>
 
-        <!-- Custo fixo em R$ (override por produto/categoria) -->
-        <li v-if="numeroPasso.fixo && explicacaoCustoFixo">
-            <span class="passo-numero">{{ numeroPasso.fixo }}</span>
+        <!-- Custo direto por unidade em R$ (override por produto/categoria) -->
+        <li v-if="numeroPasso.direto && explicacaoCustoDireto">
+            <span class="passo-numero">{{ numeroPasso.direto }}</span>
             <span>
-                Cada venda também precisa cobrir
-                <strong>{{ formatCentavos(sugestao.custoFixoUnitarioCentavos) }}</strong> de custos fixos
-                <template v-if="explicacaoCustoFixo.rotulo">({{ explicacaoCustoFixo.rotulo }})</template>
+                Cada unidade tem
+                <strong>{{ formatCentavos(sugestao.custoDiretoUnitarioCentavos) }}</strong> de custo direto
+                (embalagem, frete)
+                <template v-if="explicacaoCustoDireto.rotulo">({{ explicacaoCustoDireto.rotulo }})</template>
                 → custo total de <strong>{{ formatCentavos(sugestao.custoTotalCentavos) }}</strong
                 >.
-            </span>
-        </li>
-
-        <!-- Rateio proporcional dos custos fixos (% do preço) -->
-        <li v-if="numeroPasso.rateio && rateioProporcional">
-            <span class="passo-numero">{{ numeroPasso.rateio }}</span>
-            <span>
-                Os custos fixos entram como fração do preço:
-                {{ formatCentavos(rateioProporcional.fixos) }}/mês ÷
-                {{ formatCentavos(rateioProporcional.faturamento) }} de faturamento esperado =
-                <strong>{{ fmtPct(rateioProporcional.pct) }}</strong> de cada venda — itens caros
-                contribuem mais em R$, itens baratos menos, na mesma proporção.
-                <span v-if="rateioProporcional.itens.length" class="block text-muted-foreground mt-0.5">
-                    Custos fixos:
-                    <template v-for="(item, i) in rateioProporcional.itens" :key="item.nome">
-                        <template v-if="i > 0"> · </template>
-                        {{ item.nome }} {{ formatCentavos(item.valor_centavos) }}
-                    </template>
-                </span>
-            </span>
-        </li>
-
-        <!-- Custos fixos fora da conta (sem estimativa de vendas/mês) -->
-        <li v-if="sugestao.custoFixoSemRateioCentavos" class="custo-fixo-fora">
-            <TriangleAlert class="passo-alerta" />
-            <span>
-                Os custos fixos de {{ formatCentavos(sugestao.custoFixoSemRateioCentavos) }}/mês
-                <strong>não estão nesta conta</strong> — informe o faturamento esperado por mês em
-                Configurações para o rateio proporcional entrar.
             </span>
         </li>
 
@@ -217,18 +176,6 @@ const numeroPasso = computed(() => {
 
 .explicacao-preco li:nth-child(odd) {
     background: var(--muted);
-}
-
-.passo-alerta {
-    flex-shrink: 0;
-    color: var(--color-orange-500, #f97316);
-    width: 0.85rem;
-    height: 0.85rem;
-    margin-top: 0.2rem;
-}
-
-.custo-fixo-fora {
-    color: var(--muted-foreground);
 }
 
 .passo-numero {

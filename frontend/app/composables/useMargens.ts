@@ -26,11 +26,11 @@ export interface SugestaoPreco {
      * final psicológico (múltiplo de R$ 0,10; a partir de R$ 20, final ,90). */
     precoArredondadoCentavos: number
     custoTotalCentavos: number
-    custoFixoUnitarioCentavos: number
-    origemCustoFixo: 'produto' | 'categoria' | 'padrao' | null
-    /** Custos fixos mensais configurados mas FORA da conta por faltar a
-     * estimativa de vendas/mês (não dá para ratear) — a UI deve avisar. */
-    custoFixoSemRateioCentavos: number | null
+    /** Custo DIRETO por unidade além do custo do fornecedor (embalagem,
+     * frete-compra rateado) — override explícito por produto/categoria. NÃO é
+     * custo fixo de período: entra no custo do item. 0 quando não há override. */
+    custoDiretoUnitarioCentavos: number
+    origemCustoDireto: 'produto' | 'categoria' | 'padrao' | null
     descontos: { nome: string; pct: number }[]
     /** Margem efetivamente aplicada (base + ajuste de giro). */
     margemPct: number
@@ -193,10 +193,15 @@ export function useMargens() {
         return { ...base, participacaoPct: null }
     }
 
-    function custoFixoUnitario(
+    /** Custo DIRETO por unidade além do custo do fornecedor (embalagem,
+     * frete-compra rateado) — só quando definido explicitamente no produto ou na
+     * categoria. É custo do PRODUTO (entra no custo do item), distinto da
+     * cobertura de custos fixos (aluguel, salário, DAS), que é um % do preço em
+     * `custoFixoPct`. Por isso um não anula o outro. */
+    function custoDiretoUnitario(
         categoria: string | null,
         produtoId: string | null,
-    ): { centavos: number; origem: SugestaoPreco['origemCustoFixo'] } {
+    ): { centavos: number; origem: SugestaoPreco['origemCustoDireto'] } {
         const doProduto = overrideProduto(produtoId)
         if (doProduto?.custo_fixo_unitario_centavos != null) {
             return { centavos: doProduto.custo_fixo_unitario_centavos, origem: 'produto' }
@@ -210,12 +215,13 @@ export function useMargens() {
         return { centavos: 0, origem: null }
     }
 
-    /** Rateio proporcional ao valor: sem override em R$ (produto/categoria),
-     * os custos fixos entram como percentual do preço — custos ÷ faturamento
-     * mensal estimado. Um fusível de R$ 1 e um alternador de R$ 250 carregam
-     * a mesma fração do próprio preço, não o mesmo valor absoluto. */
-    function custoFixoPct(categoria: string | null, produtoId: string | null): number {
-        if (custoFixoUnitario(categoria, produtoId).origem != null) return 0
+    /** Cobertura dos custos fixos embutida no preço, de forma TRANSPARENTE: a
+     * fração do preço que recupera o custo fixo de período = custos fixos ÷
+     * faturamento mensal esperado. É o "markup de cobertura" — a mesma % que o
+     * painel de cobertura mostra —, aplicada a todo item para o preço fechar a
+     * conta da loja no volume esperado. O dono ajusta as MARGENS por categoria
+     * conforme a concorrência (cada caso); esta linha cobre só o overhead. */
+    function custoFixoPct(): number {
         const { custosFixosMensaisCentavos: fixos, faturamentoMensalCentavos: faturamento } = config.value
         if (fixos != null && fixos > 0 && faturamento != null && faturamento > 0) {
             return (100 * fixos) / faturamento
@@ -225,7 +231,7 @@ export function useMargens() {
 
     /** Descontos que saem do preço para um produto específico (frete de venda
      * pode ter override por produto; cartão vem da pior máquina; custos fixos
-     * entram como percentual quando não há override em R$). */
+     * entram como percentual do preço = fixos ÷ faturamento esperado). */
     function descontosDoProduto(
         produtoId: string | null,
         categoria: string | null = null,
@@ -244,22 +250,18 @@ export function useMargens() {
         const impostoPct =
             (produtoId != null ? bpsParaPct(aliquotasEfetivas.value[produtoId] ?? null) : null) ??
             config.value.impostoPct
+        // Custos variáveis da venda + a cobertura transparente dos custos fixos
+        // (fixos ÷ faturamento). O custo fixo de período NÃO distorce por item:
+        // é a mesma fração para todos; a MARGEM por categoria (cada caso) é a
+        // alavanca de lucro/competitividade. O painel de cobertura valida o todo.
         return [
             { nome: 'Imposto', pct: impostoPct },
             { nome: 'Comissão', pct: config.value.comissaoPct },
             { nome: rotuloCartao ? `Cartão (${rotuloCartao})` : 'Cartão', pct: cartao.pct },
             { nome: 'Frete', pct: fretePct },
             { nome: 'Outros', pct: config.value.outrosPct },
-            { nome: 'Custos fixos', pct: custoFixoPct(categoria, produtoId) },
+            { nome: 'Custos fixos', pct: custoFixoPct() },
         ].filter((d) => d.pct > 0)
-    }
-
-    /** Custos fixos configurados que estão FORA da conta: sem override em R$
-     * e sem o faturamento mensal estimado, não há como ratear. */
-    function custoFixoSemRateio(): number | null {
-        const { custosFixosMensaisCentavos: fixos, faturamentoMensalCentavos: faturamento } = config.value
-        if (fixos != null && fixos > 0 && (faturamento == null || faturamento <= 0)) return fixos
-        return null
     }
 
     function margemDesejada(
@@ -319,8 +321,13 @@ export function useMargens() {
         return null
     }
 
-    /** Preço sugerido via markup sobre o preço de venda:
-     * preço = custo_total / (1 − (descontos% + margem%) / 100). */
+    /** Preço sugerido (markup sobre o preço de venda):
+     * preço = custo_direto / (1 − (deduções% + margem%) / 100). As deduções são
+     * os custos variáveis da venda (imposto, comissão, cartão, frete) MAIS a
+     * cobertura transparente dos custos fixos (fixos ÷ faturamento, igual para
+     * todo item — não distorce por preço). A MARGEM por categoria é o lucro, e é
+     * a alavanca de competitividade caso a caso; o painel de cobertura
+     * (`coberturaCustosFixos`) valida se margens × volume fecham a conta. */
     function sugerirPreco(
         custoDiretoCentavos: number,
         categoria: string | null,
@@ -335,8 +342,8 @@ export function useMargens() {
             Math.min(margem.pct, MARGEM_MINIMA_POS_GIRO_PCT),
         )
 
-        const fixo = custoFixoUnitario(categoria, produtoId)
-        const custoTotalCentavos = custoDiretoCentavos + fixo.centavos
+        const direto = custoDiretoUnitario(categoria, produtoId)
+        const custoTotalCentavos = custoDiretoCentavos + direto.centavos
         const descontos = descontosDoProduto(produtoId, categoria)
         const descontosPct = descontos.reduce((s, d) => s + d.pct, 0)
         const denominador = 1 - (descontosPct + margemEfetivaPct) / 100
@@ -352,10 +359,8 @@ export function useMargens() {
             precoCentavos: precoExato,
             precoArredondadoCentavos: precoPsicologico(precoExato),
             custoTotalCentavos,
-            custoFixoUnitarioCentavos: fixo.centavos,
-            origemCustoFixo: fixo.origem,
-            // Aviso só quando o rateio padrão falharia E não há override cobrindo.
-            custoFixoSemRateioCentavos: fixo.origem == null ? custoFixoSemRateio() : null,
+            custoDiretoUnitarioCentavos: direto.centavos,
+            origemCustoDireto: direto.origem,
             descontos,
             margemPct: margemEfetivaPct,
             margemBasePct: margem.pct,
@@ -425,6 +430,51 @@ export function useMargens() {
         }
     }
 
+    /** Cobertura dos custos fixos no NÍVEL DA LOJA. Cada preço já embute uma
+     * fração de cobertura (`custoFixoPct` = fixos ÷ faturamento); este painel
+     * VALIDA se, no volume esperado, a margem de contribuição agregada realmente
+     * cobre os custos fixos. Devolve o ponto de equilíbrio, o gap mensal e a
+     * "margem de cobertura" de referência (fixos ÷ faturamento) — o mesmo % que
+     * entra no preço, exposto para o dono calibrar as margens por categoria
+     * conforme concorrência/elasticidade (cada caso é um caso). */
+    function coberturaCustosFixos(produtos: Produto[]): {
+        fixosCentavos: number
+        equilibrio: ReturnType<typeof pontoDeEquilibrio>
+        vendasEsperadas: number | null
+        contribuicaoEsperadaCentavos: number | null
+        cobre: boolean | null
+        gapMensalCentavos: number
+        markupCoberturaPct: number | null
+    } | null {
+        const fixos = config.value.custosFixosMensaisCentavos
+        if (fixos == null || fixos <= 0) return null
+
+        const equilibrio = pontoDeEquilibrio(produtos)
+        const faturamento = config.value.faturamentoMensalCentavos
+        const markupCoberturaPct =
+            faturamento != null && faturamento > 0 ? (100 * fixos) / faturamento : null
+
+        const vendasEsperadas = config.value.vendasMensaisEstimadas
+        let cobre: boolean | null = null
+        let gapMensalCentavos = 0
+        let contribuicaoEsperadaCentavos: number | null = null
+        if (equilibrio && vendasEsperadas != null && vendasEsperadas > 0) {
+            contribuicaoEsperadaCentavos =
+                equilibrio.margemContribuicaoMediaCentavos * vendasEsperadas
+            cobre = contribuicaoEsperadaCentavos >= fixos
+            gapMensalCentavos = Math.max(0, fixos - contribuicaoEsperadaCentavos)
+        }
+        return {
+            fixosCentavos: fixos,
+            equilibrio,
+            vendasEsperadas,
+            contribuicaoEsperadaCentavos,
+            cobre,
+            gapMensalCentavos,
+            markupCoberturaPct,
+        }
+    }
+
     return {
         config,
         margensCategoria,
@@ -437,5 +487,6 @@ export function useMargens() {
         sugerirPreco,
         lucroLiquido,
         pontoDeEquilibrio,
+        coberturaCustosFixos,
     }
 }

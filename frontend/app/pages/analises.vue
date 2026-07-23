@@ -518,6 +518,62 @@ const abcTomStyle: Record<string, { backgroundColor: string }> = {
                         </Card>
                     </div>
 
+                    <Card v-if="precos.cobertura" class="mb-4">
+                        <CardContent>
+                            <p class="text-base font-semibold">Cobertura dos custos fixos</p>
+                            <p class="text-sm text-muted-foreground mb-3">
+                                Cada preço já embute a mesma fração para pagar os custos fixos (aluguel, salário,
+                                DAS…) — sem penalizar item caro. Aqui você confere se, no volume esperado, isso
+                                realmente fecha a conta do mês.
+                            </p>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div>
+                                    <span class="text-sm text-muted-foreground">Custos fixos por mês</span>
+                                    <div class="text-2xl font-semibold mt-1">
+                                        {{ formatCentavos(precos.cobertura.fixosCentavos) }}
+                                    </div>
+                                </div>
+                                <div v-if="precos.cobertura.equilibrio">
+                                    <span class="text-sm text-muted-foreground">Ponto de equilíbrio</span>
+                                    <div class="text-2xl font-semibold mt-1">
+                                        {{ precos.cobertura.equilibrio.unidades }} vendas/mês
+                                    </div>
+                                    <span class="text-xs text-muted-foreground">
+                                        ≈ {{ formatCentavos(precos.cobertura.equilibrio.receitaCentavos) }} para pagar os fixos
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="text-sm text-muted-foreground">Situação</span>
+                                    <div
+                                        v-if="precos.cobertura.cobre === true"
+                                        class="text-2xl font-semibold mt-1 text-green-600 dark:text-green-400"
+                                    >
+                                        Cobre ✓
+                                    </div>
+                                    <div
+                                        v-else-if="precos.cobertura.cobre === false"
+                                        class="text-2xl font-semibold mt-1 text-orange-500"
+                                    >
+                                        Faltam {{ formatCentavos(precos.cobertura.gapMensalCentavos) }}/mês
+                                    </div>
+                                    <div v-else class="text-sm mt-1 text-muted-foreground">
+                                        Informe as vendas/mês esperadas em Configurações.
+                                    </div>
+                                    <span v-if="precos.cobertura.cobre === false" class="text-xs text-muted-foreground">
+                                        suba a margem nas categorias de menos concorrência, ou venda mais
+                                    </span>
+                                </div>
+                            </div>
+                            <p v-if="precos.cobertura.markupCoberturaPct != null" class="text-xs text-muted-foreground mt-3">
+                                Cada preço já reserva
+                                <strong>{{ Number(precos.cobertura.markupCoberturaPct.toFixed(1)) }}%</strong>
+                                (custos fixos ÷ faturamento esperado) para os custos fixos. A margem que você
+                                define por categoria é o LUCRO por cima disso — item de nicho aguenta mais,
+                                commodity menos (cada caso é um caso).
+                            </p>
+                        </CardContent>
+                    </Card>
+
                     <Card>
                         <CardContent>
                             <p class="text-base font-semibold">Preço praticado × preço sugerido</p>
