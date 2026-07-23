@@ -18,31 +18,31 @@ pub struct NotaFiscal {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<NotaFiscalEvent>,
-    pub venda_id: Uuid,
-    pub cliente_id: Option<Uuid>,
-    pub modelo: ModeloNF,
-    pub serie: String,
-    pub numero: u32,
-    pub chave: Option<String>,
-    pub protocolo: Option<String>,
-    pub status: StatusNFe,
-    pub itens: Vec<ItemNF>,
-    pub totais: TotaisNF,
-    pub gerada_em: DateTime<Utc>,
+    venda_id: Uuid,
+    cliente_id: Option<Uuid>,
+    modelo: ModeloNF,
+    serie: String,
+    numero: u32,
+    chave: Option<String>,
+    protocolo: Option<String>,
+    status: StatusNFe,
+    itens: Vec<ItemNF>,
+    totais: TotaisNF,
+    gerada_em: DateTime<Utc>,
     /// Cancelamento aguardando a integração SEFAZ entrar em operação
     /// (`serde(default)` mantém snapshots antigos deserializáveis).
     #[serde(default)]
-    pub cancelamento_pendente: bool,
+    cancelamento_pendente: bool,
     /// Finalidade (normal vs. devolução) e sentido (saída/entrada). NFs antigas
     /// deserializam como Normal/Saída.
     #[serde(default)]
-    pub finalidade: FinalidadeNFe,
+    finalidade: FinalidadeNFe,
     #[serde(default)]
-    pub tipo_nf: TipoNF,
+    tipo_nf: TipoNF,
     /// Chave da NF-e original referenciada (grupo NFref) — presente só nas
     /// notas de devolução.
     #[serde(default)]
-    pub nf_referenciada: Option<String>,
+    nf_referenciada: Option<String>,
 }
 
 impl NotaFiscal {
@@ -279,6 +279,20 @@ impl NotaFiscal {
             occurred_at: Utc::now(),
         });
         Ok(())
+    }
+
+    // Getters (leitura; a mutação passa pelos métodos acima).
+
+    pub fn status(&self) -> StatusNFe {
+        self.status
+    }
+
+    pub fn itens(&self) -> &[ItemNF] {
+        &self.itens
+    }
+
+    pub fn cancelamento_pendente(&self) -> bool {
+        self.cancelamento_pendente
     }
 }
 

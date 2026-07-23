@@ -114,7 +114,7 @@ async fn fiscal_cancelar_nf_autorizada() -> TestResult {
             .expect("buscar NF falhou")
             .expect("NF não encontrada");
 
-        assert_eq!(nf.status, StatusNFe::Autorizada);
+        assert_eq!(nf.status(), StatusNFe::Autorizada);
 
         fiscal
             .handle(CancelarNotaFiscal {
@@ -699,7 +699,7 @@ async fn simples_configurado_emite_sem_legados_com_csosn_e_das() -> TestResult {
             .await
             .expect("buscar NF")
             .expect("NF existe");
-        let imposto = &nf.itens[0].imposto;
+        let imposto = &nf.itens()[0].imposto;
         assert_eq!(imposto.csosn.as_deref(), Some("102"));
         assert_eq!(imposto.das_centavos, 7_000, "DAS 7% sobre R$ 1.000,00");
 

@@ -17,10 +17,10 @@ id_type!(VendaId);
 // há como montar um item inválido via struct literal de fora deste módulo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemVenda {
-    pub item_id: Uuid,
-    pub produto_id: Uuid,
-    pub sku: String,
-    pub descricao: String,
+    item_id: Uuid,
+    produto_id: Uuid,
+    sku: String,
+    descricao: String,
     quantidade: u32,
     preco_unitario_centavos: i64,
 }
@@ -40,16 +40,16 @@ pub struct Venda {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<VendaEvent>,
-    pub vendedor_id: Uuid,
-    pub cliente_id: Option<Uuid>,
-    pub itens: Vec<ItemVenda>,
+    vendedor_id: Uuid,
+    cliente_id: Option<Uuid>,
+    itens: Vec<ItemVenda>,
     /// Desconto global da venda (herdado do orçamento na conversão).
     /// `#[serde(default)]`: snapshots persistidos antes do campo deserializam
     /// com desconto zero — comportamento idêntico ao anterior.
     #[serde(default)]
-    pub desconto_centavos: i64,
-    pub forma_pagamento: Option<FormaPagamento>,
-    pub status: StatusVenda,
+    desconto_centavos: i64,
+    forma_pagamento: Option<FormaPagamento>,
+    status: StatusVenda,
 }
 
 impl Venda {

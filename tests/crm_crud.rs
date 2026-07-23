@@ -212,9 +212,9 @@ async fn repositorio_persiste_e_recarrega_agregado() -> TestResult {
             .await
             .expect("find_by_id")
             .expect("agregado deve existir");
-        assert_eq!(cliente.nome.to_string(), "João da Silva");
-        assert!(cliente.ativo);
-        assert!(!cliente.bloqueado);
+        assert_eq!(cliente.nome().to_string(), "João da Silva");
+        assert!(cliente.ativo());
+        assert!(!cliente.bloqueado());
     })
     .await;
     Ok(())

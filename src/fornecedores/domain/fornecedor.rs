@@ -17,12 +17,12 @@ pub struct Fornecedor {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<FornecedorEvent>,
-    pub razao_social: NomeNaoVazio,
-    pub cnpj: Cnpj,
-    pub telefone: Option<Telefone>,
-    pub email: Option<Email>,
-    pub prazo_pagamento_dias: u16,
-    pub ativo: bool,
+    razao_social: NomeNaoVazio,
+    cnpj: Cnpj,
+    telefone: Option<Telefone>,
+    email: Option<Email>,
+    prazo_pagamento_dias: u16,
+    ativo: bool,
 }
 
 impl Fornecedor {
@@ -118,6 +118,16 @@ impl Fornecedor {
         });
 
         Ok(())
+    }
+
+    // Getters (leitura).
+
+    pub fn cnpj(&self) -> &Cnpj {
+        &self.cnpj
+    }
+
+    pub fn ativo(&self) -> bool {
+        self.ativo
     }
 }
 

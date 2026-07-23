@@ -19,7 +19,7 @@ pub struct ItemEstoque {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<EstoqueEvent>,
-    pub produto_id: Uuid,
+    produto_id: Uuid,
     // Privados: mutação só via `registrar_entrada`/`baixar`/`ajustar`/
     // `definir_estoque_minimo`, que emitem o evento correspondente — um
     // `&mut ItemEstoque` de fora não pode zerar o saldo sem passar por essas

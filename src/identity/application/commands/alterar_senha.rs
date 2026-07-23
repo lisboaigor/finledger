@@ -23,7 +23,7 @@ impl CommandHandler<AlterarSenha> for IdentityHandlers {
     async fn handle(&self, cmd: AlterarSenha) -> Result<(), AppError> {
         let mut usuario = self.carregar(UsuarioId::from_uuid(cmd.usuario_id)).await?;
 
-        if !verify_password(&cmd.senha_atual, &usuario.password_hash) {
+        if !verify_password(&cmd.senha_atual, usuario.password_hash()) {
             return Err(AppError::Unauthorized);
         }
 

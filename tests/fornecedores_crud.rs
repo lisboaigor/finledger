@@ -170,8 +170,8 @@ async fn repositorio_persiste_e_recarrega_agregado() -> TestResult {
             .await
             .expect("find_by_id")
             .expect("agregado deve existir");
-        assert_eq!(fornecedor.cnpj.as_str(), "12345678000195");
-        assert!(fornecedor.ativo);
+        assert_eq!(fornecedor.cnpj().as_str(), "12345678000195");
+        assert!(fornecedor.ativo());
     })
     .await;
     Ok(())

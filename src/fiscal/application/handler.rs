@@ -115,7 +115,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         let mut itens = Vec::new();
         for snap in devolvidos {
             let produto_id = Uuid::parse_str(&snap.produto_id).map_err(AppError::infra)?;
-            let Some(orig) = original.itens.iter().find(|i| i.produto_id == produto_id) else {
+            let Some(orig) = original.itens().iter().find(|i| i.produto_id == produto_id) else {
                 tracing::warn!(%produto_id, "item devolvido sem correspondente na NF original — ignorado");
                 continue;
             };
@@ -225,7 +225,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             // cancelamento como pendente (cobre o caso de ela ter sido
             // autorizada do outro lado) — resolve-se na tela Fiscal.
             tracing::warn!(%venda_id, %nf_id, "devolução sobre NF presa em 'transmitida' — marcando cancelamento pendente");
-            if nf.cancelamento_pendente {
+            if nf.cancelamento_pendente() {
                 tracing::info!(%venda_id, "NF já com cancelamento pendente; devolução adicional registrada");
             } else {
                 nf.solicitar_cancelamento(format!("Devolução de itens: {motivo}"))?;
@@ -260,7 +260,7 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
             )?;
             self.salvar(&mut dev).await?;
             self.transmitir_nf(&mut dev).await?;
-        } else if nf.cancelamento_pendente {
+        } else if nf.cancelamento_pendente() {
             // Nova devolução sobre nota já marcada — nada a solicitar de novo.
             tracing::info!(%venda_id, "NF já com cancelamento pendente; devolução adicional registrada");
         } else {

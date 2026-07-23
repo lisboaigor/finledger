@@ -27,16 +27,16 @@ pub struct ContaPagar {
     events: AggregateEvents<FinanceiroEvent>,
     /// Documento de origem: pedido de compra ou, em CP de reembolso, a VENDA
     /// devolvida (a `descricao` deixa o caso explícito).
-    pub pedido_id: Uuid,
+    pedido_id: Uuid,
     /// Credor: fornecedor do pedido ou, em CP de reembolso, o CLIENTE da venda.
-    pub fornecedor_id: Uuid,
-    pub valor_original: Dinheiro,
-    pub valor_pago: Dinheiro,
+    fornecedor_id: Uuid,
+    valor_original: Dinheiro,
+    valor_pago: Dinheiro,
     /// Rótulo humano. Campo novo: `default` para snapshots antigos.
     #[serde(default)]
-    pub descricao: Option<String>,
-    pub vencimento: DateTime<Utc>,
-    pub status: StatusContaPagar,
+    descricao: Option<String>,
+    vencimento: DateTime<Utc>,
+    status: StatusContaPagar,
 }
 
 impl ContaPagar {

@@ -16,10 +16,10 @@ pub struct Usuario {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<IdentityEvent>,
-    pub username: String,
-    pub password_hash: String,
-    pub roles: Vec<String>,
-    pub ativo: bool,
+    username: String,
+    password_hash: String,
+    roles: Vec<String>,
+    ativo: bool,
 }
 
 impl Usuario {
@@ -130,6 +130,11 @@ impl Usuario {
         self.roles = roles;
 
         Ok(())
+    }
+
+    /// Hash da senha (leitura para verificação em `AlterarSenha`).
+    pub fn password_hash(&self) -> &str {
+        &self.password_hash
     }
 }
 

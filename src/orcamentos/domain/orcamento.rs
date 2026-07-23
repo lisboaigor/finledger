@@ -27,10 +27,10 @@ pub enum StatusOrcamento {
 // `Quantidade`/`Dinheiro` — sem struct literal de fora deste módulo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemOrcamento {
-    pub item_id: Uuid,
-    pub produto_id: Uuid,
-    pub sku: String,
-    pub descricao: String,
+    item_id: Uuid,
+    produto_id: Uuid,
+    sku: String,
+    descricao: String,
     quantidade: u32,
     preco_unitario_centavos: i64,
 }
@@ -50,21 +50,21 @@ pub struct Orcamento {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<OrcamentoEvent>,
-    pub vendedor_id: Uuid,
+    vendedor_id: Uuid,
     /// Quem é o cliente deste orçamento — cadastro completo do CRM ou nome
     /// avulso de balcão. Ver [`IdentificacaoCliente`] para a regra de
     /// exclusividade mútua entre os dois casos.
-    pub identificacao_cliente: IdentificacaoCliente,
-    pub itens: Vec<ItemOrcamento>,
-    pub desconto_centavos: i64,
-    pub validade_dias: u16,
-    pub status: StatusOrcamento,
+    identificacao_cliente: IdentificacaoCliente,
+    itens: Vec<ItemOrcamento>,
+    desconto_centavos: i64,
+    validade_dias: u16,
+    status: StatusOrcamento,
     /// Data de criação do orçamento — âncora do vencimento (`criado_em +
     /// validade_dias`). Snapshots antigos não têm o campo: o default `Utc::now`
     /// faz o vencimento contar a partir da primeira releitura, o comportamento
     /// que já valia antes (vencimento deslizante) — nunca MENOS prazo que antes.
     #[serde(default = "Utc::now")]
-    pub criado_em: DateTime<Utc>,
+    criado_em: DateTime<Utc>,
 }
 
 impl Orcamento {

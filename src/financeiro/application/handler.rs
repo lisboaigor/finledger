@@ -179,7 +179,7 @@ impl FinanceiroHandlers {
             let mut conta = self
                 .load_receber(ContaReceberId::from_uuid(conta_id))
                 .await?;
-            let recebido = conta.valor_recebido;
+            let recebido = conta.valor_recebido();
             if let Err(err) = conta.estornar(format!("Devolução total: {motivo}")) {
                 // "Já estornada" = projeção/reprocessamento defasado; só pular.
                 tracing::warn!(%venda_id, %conta_id, error = %err, "conta não estornável, pulando");

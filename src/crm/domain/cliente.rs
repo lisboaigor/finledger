@@ -39,14 +39,14 @@ pub struct Cliente {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<CrmEvent>,
-    pub nome: NomeNaoVazio,
-    pub cpf_cnpj: CpfCnpj,
-    pub telefone: Option<Telefone>,
-    pub email: Option<Email>,
+    nome: NomeNaoVazio,
+    cpf_cnpj: CpfCnpj,
+    telefone: Option<Telefone>,
+    email: Option<Email>,
     #[serde(default)]
-    pub uf: Option<String>,
-    pub ativo: bool,
-    pub bloqueado: bool,
+    uf: Option<String>,
+    ativo: bool,
+    bloqueado: bool,
 }
 
 impl Cliente {
@@ -166,6 +166,20 @@ impl Cliente {
             occurred_at: Utc::now(),
         });
         Ok(())
+    }
+
+    // Getters (leitura).
+
+    pub fn nome(&self) -> &NomeNaoVazio {
+        &self.nome
+    }
+
+    pub fn ativo(&self) -> bool {
+        self.ativo
+    }
+
+    pub fn bloqueado(&self) -> bool {
+        self.bloqueado
     }
 }
 

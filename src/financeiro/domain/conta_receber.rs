@@ -26,20 +26,20 @@ pub struct ContaReceber {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<FinanceiroEvent>,
-    pub venda_id: Uuid,
-    pub cliente_id: Option<Uuid>,
-    pub valor_original: Dinheiro,
-    pub valor_recebido: Dinheiro,
+    venda_id: Uuid,
+    cliente_id: Option<Uuid>,
+    valor_original: Dinheiro,
+    valor_recebido: Dinheiro,
     /// Total abatido do valor da conta (devolução parcial, desconto negociado).
     /// Campo novo: `default` para snapshots antigos sem ele.
     #[serde(default = "Dinheiro::zero")]
-    pub valor_abatido: Dinheiro,
+    valor_abatido: Dinheiro,
     /// Rótulo humano (ex.: "Parcela 2/3 — venda X"). Campo novo: `default`
     /// para snapshots antigos.
     #[serde(default)]
-    pub descricao: Option<String>,
-    pub vencimento: DateTime<Utc>,
-    pub status: StatusContaReceber,
+    descricao: Option<String>,
+    vencimento: DateTime<Utc>,
+    status: StatusContaReceber,
 }
 
 impl ContaReceber {
@@ -239,6 +239,11 @@ impl ContaReceber {
                 - self.valor_abatido.centavos()
                 - self.valor_recebido.centavos(),
         )
+    }
+
+    /// Total já recebido (leitura para o fluxo de estorno/reembolso).
+    pub fn valor_recebido(&self) -> Dinheiro {
+        self.valor_recebido
     }
 }
 

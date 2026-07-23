@@ -21,10 +21,10 @@ pub enum StatusPedido {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemPedido {
-    pub produto_id: Uuid,
-    pub quantidade_pedida: u32,
-    pub quantidade_recebida: u32,
-    pub custo_unitario_centavos: i64,
+    produto_id: Uuid,
+    quantidade_pedida: u32,
+    quantidade_recebida: u32,
+    custo_unitario_centavos: i64,
 }
 
 impl ItemPedido {
@@ -43,11 +43,11 @@ pub struct PedidoCompra {
     #[events]
     #[serde(skip)]
     events: AggregateEvents<ComprasEvent>,
-    pub comprador_id: Uuid,
-    pub fornecedor_id: Uuid,
-    pub itens: Vec<ItemPedido>,
-    pub prazo_pagamento_dias: u16,
-    pub status: StatusPedido,
+    comprador_id: Uuid,
+    fornecedor_id: Uuid,
+    itens: Vec<ItemPedido>,
+    prazo_pagamento_dias: u16,
+    status: StatusPedido,
 }
 
 impl PedidoCompra {
