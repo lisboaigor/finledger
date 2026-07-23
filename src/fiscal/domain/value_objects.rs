@@ -33,6 +33,48 @@ pub enum StatusNFe {
     Cancelada,
 }
 
+/// Finalidade da NF-e (`finNFe`): normal (1) ou devolução/retorno (4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FinalidadeNFe {
+    #[default]
+    Normal,
+    Devolucao,
+}
+
+impl FinalidadeNFe {
+    /// Código `finNFe` do layout da NF-e.
+    pub fn codigo(&self) -> &'static str {
+        match self {
+            Self::Normal => "1",
+            Self::Devolucao => "4",
+        }
+    }
+}
+
+/// Sentido da operação (`tpNF`): saída (1, venda) ou entrada (0, devolução).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TipoNF {
+    #[default]
+    Saida,
+    Entrada,
+}
+
+impl TipoNF {
+    /// Código `tpNF` do layout da NF-e.
+    pub fn codigo(&self) -> &'static str {
+        match self {
+            Self::Saida => "1",
+            Self::Entrada => "0",
+        }
+    }
+}
+
+/// CSOSN "tributada pelo Simples Nacional sem permissão de crédito" — caso
+/// geral do Simples sem substituição tributária.
+pub const CSOSN_TRIBUTADA_SEM_ST: &str = "102";
+/// CST do ICMS "tributada integralmente" — caso geral de regime normal sem ST.
+pub const CST_ICMS_TRIBUTADA_INTEGRAL: &str = "00";
+
 /// Impostos calculados de um item, congelados no evento `NotaFiscalGerada` —
 /// replays nunca recalculam. Campos novos da reforma tributária (CBS/IBS/IS)
 /// entram com `#[serde(default)]` para eventos gravados antes do motor
@@ -94,6 +136,33 @@ impl ImpostoItem {
     /// sem opção pelo regime regular eles são recolhidos por dentro do DAS
     /// (LC 214/2025, art. 41) e não incrementam o custo por fora. Fonte única
     /// reusada por precificação, BI e projeção (evita duplicar a regra em TS/SQL).
+    /// Rateia todos os tributos proporcionalmente (`num`/`den`) — usado na
+    /// NF-e de devolução, que espelha os impostos da nota original na razão da
+    /// quantidade devolvida (reverte o que foi cobrado; não recalcula por
+    /// alíquota). Aritmética inteira half-up. `den == 0` → tudo zero.
+    pub fn ratear(&self, num: u32, den: u32) -> Self {
+        if den == 0 {
+            return Self::default();
+        }
+        let (num, den) = (num as i128, den as i128);
+        let r = |v: i64| ((v as i128 * num + den / 2) / den) as i64;
+        Self {
+            icms_centavos: r(self.icms_centavos),
+            pis_centavos: r(self.pis_centavos),
+            cofins_centavos: r(self.cofins_centavos),
+            iss_centavos: r(self.iss_centavos),
+            cbs_centavos: r(self.cbs_centavos),
+            ibs_uf_centavos: r(self.ibs_uf_centavos),
+            ibs_mun_centavos: r(self.ibs_mun_centavos),
+            is_centavos: r(self.is_centavos),
+            das_centavos: r(self.das_centavos),
+            c_class_trib: self.c_class_trib.clone(),
+            cst_ibs_cbs: self.cst_ibs_cbs.clone(),
+            csosn: self.csosn.clone(),
+            cst_icms: self.cst_icms.clone(),
+        }
+    }
+
     pub fn custo_vendedor_centavos(&self, ibs_cbs_informativo: bool) -> i64 {
         let legado_e_seletivo = self.icms_centavos
             + self.iss_centavos

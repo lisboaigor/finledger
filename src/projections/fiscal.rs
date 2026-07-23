@@ -32,6 +32,9 @@ impl FiscalProjection {
                 itens,
                 totais,
                 ibs_cbs_informativo,
+                finalidade,
+                tipo_nf,
+                nf_referenciada,
                 occurred_at,
             } => {
                 let nf_uuid =
@@ -47,9 +50,10 @@ impl FiscalProjection {
                      (nf_id, venda_id, cliente_id, modelo, serie, numero, status,
                       total_centavos, desconto_centavos, gerada_em, atualizado_em, tenant_id,
                       icms_centavos, pis_centavos, cofins_centavos, iss_centavos,
-                      cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos)
+                      cbs_centavos, ibs_uf_centavos, ibs_mun_centavos, is_centavos,
+                      finalidade, tipo_operacao, nf_chave_referenciada)
                      VALUES ($1,$2,$3,$4,$5,$6,'gerada',$7,$8,$9,$9,$10,
-                             $11,$12,$13,$14,$15,$16,$17,$18)
+                             $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
                      ON CONFLICT (tenant_id, nf_id) DO NOTHING",
                 )
                 .bind(nf_uuid)
@@ -70,6 +74,9 @@ impl FiscalProjection {
                 .bind(totais.ibs_uf_centavos)
                 .bind(totais.ibs_mun_centavos)
                 .bind(totais.is_centavos)
+                .bind(finalidade.codigo())
+                .bind(tipo_nf.codigo())
+                .bind(nf_referenciada.as_deref())
                 .execute(&self.pool)
                 .await?;
 

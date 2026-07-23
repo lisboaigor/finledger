@@ -12,6 +12,21 @@
 
 use super::value_objects::ModeloNF;
 
+// CFOPs de mercadoria adquirida de terceiros (revenda). Nomeados para não
+// espalhar códigos "mágicos" pelo motor/handler.
+/// Venda dentro do estado.
+pub const CFOP_VENDA_INTERNA: &str = "5102";
+/// Venda dentro do estado, com ICMS-ST (substituído).
+pub const CFOP_VENDA_INTERNA_ST: &str = "5405";
+/// Venda interestadual.
+pub const CFOP_VENDA_INTERESTADUAL: &str = "6102";
+/// Venda interestadual, com ICMS-ST.
+pub const CFOP_VENDA_INTERESTADUAL_ST: &str = "6404";
+/// Devolução (entrada) dentro do estado.
+pub const CFOP_DEVOLUCAO_INTERNA: &str = "1202";
+/// Devolução (entrada) interestadual.
+pub const CFOP_DEVOLUCAO_INTERESTADUAL: &str = "2202";
+
 /// Sentido da operação para fins de CFOP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TipoOperacao {
@@ -19,8 +34,15 @@ pub enum TipoOperacao {
     Devolucao,
 }
 
-/// Resolve o CFOP da operação. `uf_destinatario = None` (consumidor final sem
-/// endereço, típico de NFCe) é tratado como operação **interna**.
+/// Interestadual = há UF de destino e ela difere da do emitente. Sem UF de
+/// destino (consumidor final sem endereço, típico de NFCe) → operação interna.
+fn e_interestadual(uf_emitente: &str, uf_destinatario: Option<&str>) -> bool {
+    uf_destinatario
+        .map(|d| !d.eq_ignore_ascii_case(uf_emitente))
+        .unwrap_or(false)
+}
+
+/// Resolve o CFOP da operação.
 pub fn resolver_cfop(
     op: TipoOperacao,
     uf_emitente: &str,
@@ -28,25 +50,31 @@ pub fn resolver_cfop(
     _modelo: &ModeloNF,
     tem_st: bool,
 ) -> &'static str {
-    let interestadual = uf_destinatario
-        .map(|d| !d.eq_ignore_ascii_case(uf_emitente))
-        .unwrap_or(false);
+    let inter = e_interestadual(uf_emitente, uf_destinatario);
     match op {
-        TipoOperacao::Venda => match (interestadual, tem_st) {
-            (false, false) => "5102", // venda de merc. de terceiros, mesma UF
-            (false, true) => "5405",  // idem, com ICMS-ST (substituído)
-            (true, false) => "6102",  // venda interestadual
-            (true, true) => "6404",   // venda interestadual com ICMS-ST
+        TipoOperacao::Venda => match (inter, tem_st) {
+            (false, false) => CFOP_VENDA_INTERNA,
+            (false, true) => CFOP_VENDA_INTERNA_ST,
+            (true, false) => CFOP_VENDA_INTERESTADUAL,
+            (true, true) => CFOP_VENDA_INTERESTADUAL_ST,
         },
-        // Devolução de venda: entrada referenciando a NF original.
-        TipoOperacao::Devolucao => {
-            if interestadual {
-                "2202"
-            } else {
-                "1202"
-            }
-        }
+        TipoOperacao::Devolucao => cfop_devolucao(inter),
     }
+}
+
+/// CFOP de devolução (entrada) conforme o sentido da operação.
+pub fn cfop_devolucao(interestadual: bool) -> &'static str {
+    if interestadual {
+        CFOP_DEVOLUCAO_INTERESTADUAL
+    } else {
+        CFOP_DEVOLUCAO_INTERNA
+    }
+}
+
+/// Um CFOP de saída interestadual começa por '6' (5xxx = interno). Usado para
+/// derivar o CFOP de devolução a partir do CFOP da nota original.
+pub fn cfop_saida_e_interestadual(cfop_saida: &str) -> bool {
+    cfop_saida.starts_with('6')
 }
 
 #[cfg(test)]

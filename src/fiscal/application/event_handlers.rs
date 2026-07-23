@@ -48,7 +48,7 @@ impl<S: SefazClient, A: AliquotaProvider> EventHandler<VendaEvent> for FiscalVen
         if let VendaEvent::ItensDevolvidos {
             venda_id,
             cliente_id,
-            itens_restantes,
+            itens_devolvidos,
             devolucao_total,
             motivo,
             ..
@@ -65,7 +65,7 @@ impl<S: SefazClient, A: AliquotaProvider> EventHandler<VendaEvent> for FiscalVen
                 .processar_devolucao(
                     venda_uuid,
                     cliente_uuid,
-                    itens_restantes,
+                    itens_devolvidos,
                     *devolucao_total,
                     motivo,
                 )

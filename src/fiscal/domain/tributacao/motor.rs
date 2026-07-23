@@ -4,7 +4,9 @@ use super::aliquota::Aliquota;
 use super::classe_tributaria::ClasseTributariaInfo;
 use super::fase_transicao::FaseTransicao;
 use super::perfil_fiscal::{PerfilFiscal, RegimeTributario};
-use crate::fiscal::domain::value_objects::ImpostoItem;
+use crate::fiscal::domain::value_objects::{
+    ImpostoItem, CSOSN_TRIBUTADA_SEM_ST, CST_ICMS_TRIBUTADA_INTEGRAL,
+};
 
 /// Alíquotas já resolvidas (pela infraestrutura) para um item, na data de
 /// emissão e para o perfil do tenant. `None` = nenhuma linha vigente na
@@ -141,8 +143,8 @@ impl MotorTributario {
             cst_ibs_cbs: Some(classe.cst_ibs_cbs.clone()),
             // Simples → CSOSN; regimes normais → CST do ICMS. Caso geral sem ST
             // (a marcação de ST por classe/NCM é deferida — issue #16).
-            csosn: e_simples.then(|| "102".to_string()),
-            cst_icms: (!e_simples).then(|| "00".to_string()),
+            csosn: e_simples.then(|| CSOSN_TRIBUTADA_SEM_ST.to_string()),
+            cst_icms: (!e_simples).then(|| CST_ICMS_TRIBUTADA_INTEGRAL.to_string()),
             das_centavos: das,
         }
     }

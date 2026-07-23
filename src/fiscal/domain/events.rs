@@ -21,6 +21,11 @@ pub enum NotaFiscalEvent {
         /// no custo do vendedor. Eventos são publicados in-process (não
         /// serializados no event store), então o campo não carrega serde.
         ibs_cbs_informativo: bool,
+        /// Finalidade (normal/devolução), sentido (saída/entrada) e a chave da
+        /// NF-e original referenciada — só preenchidos nas notas de devolução.
+        finalidade: crate::fiscal::domain::value_objects::FinalidadeNFe,
+        tipo_nf: crate::fiscal::domain::value_objects::TipoNF,
+        nf_referenciada: Option<String>,
         #[occurred_at]
         occurred_at: DateTime<Utc>,
     },

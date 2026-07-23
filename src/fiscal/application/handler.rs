@@ -7,7 +7,9 @@ use uuid::Uuid;
 use super::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
 use super::queries::AliquotaEfetivaProduto;
 use crate::error::AppError;
-use crate::fiscal::domain::cfop::{resolver_cfop, TipoOperacao};
+use crate::fiscal::domain::cfop::{
+    cfop_devolucao, cfop_saida_e_interestadual, resolver_cfop, TipoOperacao,
+};
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
 use crate::fiscal::domain::tributacao::{
     AliquotasItem, ClasseTributaria, ContextoFiscal, FaseTransicao, MotorTributario, PerfilFiscal,
@@ -81,7 +83,12 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         )?;
 
         self.salvar(&mut nf).await?;
+        self.transmitir_nf(&mut nf).await
+    }
 
+    /// Transmite uma NF já gerada: envia à SEFAZ e autoriza/rejeita conforme a
+    /// resposta (indisponível deixa em `Transmitida` para retransmitir depois).
+    async fn transmitir_nf(&self, nf: &mut NotaFiscal) -> Result<(), AppError> {
         nf.transmitir()?;
         let xml = format!("<NF>{}</NF>", nf.id());
         match self.sefaz.transmitir(xml).await {
@@ -95,8 +102,46 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
                 tracing::warn!("SEFAZ indisponível para NF {}: {msg}", nf.id());
             }
         }
+        self.salvar(nf).await
+    }
 
-        self.salvar(&mut nf).await
+    /// Monta os itens da NF de devolução a partir da NF original, espelhando os
+    /// impostos na proporção devolvida e usando o CFOP de devolução (1202 mesma
+    /// UF / 2202 interestadual, derivado do CFOP de saída original).
+    fn montar_itens_devolucao(
+        original: &NotaFiscal,
+        devolvidos: &[ItemVendaSnapshot],
+    ) -> Result<Vec<ItemNF>, AppError> {
+        let mut itens = Vec::new();
+        for snap in devolvidos {
+            let produto_id = Uuid::parse_str(&snap.produto_id).map_err(AppError::infra)?;
+            let Some(orig) = original.itens.iter().find(|i| i.produto_id == produto_id) else {
+                tracing::warn!(%produto_id, "item devolvido sem correspondente na NF original — ignorado");
+                continue;
+            };
+            let orig_qty = orig.quantidade();
+            let dev_qty = snap.quantidade.min(orig_qty);
+            if dev_qty == 0 {
+                continue;
+            }
+            let imposto = orig.imposto.ratear(dev_qty, orig_qty);
+            // CFOP de devolução derivado do sentido da nota original.
+            let cfop_dev = cfop_devolucao(cfop_saida_e_interestadual(orig.cfop()));
+            itens.push(
+                ItemNF::novo(
+                    produto_id,
+                    orig.sku.clone(),
+                    orig.descricao.clone(),
+                    orig.ncm().to_string(),
+                    cfop_dev.into(),
+                    dev_qty,
+                    orig.valor_unitario_centavos(),
+                    imposto,
+                )
+                .map_err(AppError::Domain)?,
+            );
+        }
+        Ok(itens)
     }
 
     /// Próximo número da NF na série, sequencial e atômico por (tenant, série):
@@ -131,17 +176,20 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
     }
 
     /// Reação fiscal a uma devolução de itens:
-    /// - integração ATIVA: cancela a NF autorizada da venda e, em devolução
-    ///   parcial, reemite uma nova NF com os itens restantes;
+    /// - integração ATIVA: emite uma **NF-e de devolução** (entrada, finNFe=4)
+    ///   referenciando a chave da nota original e espelhando seus impostos na
+    ///   proporção devolvida; a nota original permanece autorizada (após a
+    ///   circulação da mercadoria, cancelamento não é válido — Ajuste SINIEF
+    ///   07/05);
     /// - integração INATIVA (cenário atual): marca `cancelamento_pendente` na
-    ///   nota — o cancelamento (e a reemissão) acontecem quando a integração
-    ///   entrar em operação, via tela Fiscal.
+    ///   nota — a NF de devolução é materializada quando a integração entrar em
+    ///   operação, via tela Fiscal.
     pub async fn processar_devolucao(
         &self,
         venda_id: Uuid,
-        cliente_id: Option<Uuid>,
-        itens_restantes: &[ItemVendaSnapshot],
-        devolucao_total: bool,
+        _cliente_id: Option<Uuid>,
+        itens_devolvidos: &[ItemVendaSnapshot],
+        _devolucao_total: bool,
         motivo: &str,
     ) -> Result<(), AppError> {
         // Além da autorizada, considera NF presa em 'transmitida' (SEFAZ pode
@@ -187,16 +235,31 @@ impl<S: SefazClient, A: AliquotaProvider> FiscalHandlers<S, A> {
         }
 
         if Self::integracao_sefaz_ativa() {
-            let proto = format!("CANC{}", Uuid::new_v4().simple());
-            nf.cancelar(proto)?;
-            self.salvar(&mut nf).await?;
-            if !devolucao_total && !itens_restantes.is_empty() {
-                // Reemissão com os itens que permaneceram na venda. Sem
-                // desconto: assim como a CR não é ajustada automaticamente na
-                // devolução parcial, o abatimento é negociado no financeiro.
-                self.gerar_e_transmitir(venda_id, cliente_id, itens_restantes, 0)
-                    .await?;
+            // NF-e de devolução (entrada, finNFe=4) referenciando a original,
+            // com os impostos espelhados na proporção devolvida. A original NÃO
+            // é cancelada — permanece autorizada.
+            let itens_dev = Self::montar_itens_devolucao(&nf, itens_devolvidos)?;
+            if itens_dev.is_empty() {
+                tracing::info!(%venda_id, "devolução sem itens correspondentes na NF original — nada a emitir");
+                return Ok(());
             }
+            let informativo = self
+                .tenants
+                .obter_perfil_fiscal()
+                .await?
+                .para_dominio()?
+                .map(|p| p.ibs_cbs_informativo())
+                .unwrap_or(true);
+            let numero = self.proximo_numero(SERIE_PADRAO).await?;
+            let mut dev = NotaFiscal::gerar_devolucao(
+                &nf,
+                format!("{SERIE_PADRAO:03}"),
+                numero,
+                itens_dev,
+                informativo,
+            )?;
+            self.salvar(&mut dev).await?;
+            self.transmitir_nf(&mut dev).await?;
         } else if nf.cancelamento_pendente {
             // Nova devolução sobre nota já marcada — nada a solicitar de novo.
             tracing::info!(%venda_id, "NF já com cancelamento pendente; devolução adicional registrada");
