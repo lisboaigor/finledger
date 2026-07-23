@@ -17,6 +17,8 @@ export interface EntradaPayload {
 
 export interface AjustePayload {
     quantidade_nova: number
+    // Obrigatório quando a nova quantidade é maior que a atual.
+    custo_unitario_centavos?: number | null
     justificativa: string
 }
 

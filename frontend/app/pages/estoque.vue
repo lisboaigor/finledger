@@ -215,6 +215,13 @@ onMounted(vm.carregar)
                         <FieldLabel>Nova quantidade</FieldLabel>
                         <InputQuantity v-model="vm.ajuste.quantidade_nova" :min="0" />
                     </Field>
+                    <Field v-if="vm.ajusteAumenta">
+                        <FieldLabel>Custo unitário das unidades acrescentadas</FieldLabel>
+                        <InputMoney v-model="vm.ajuste.custo_unitario" />
+                        <p class="text-xs text-muted-foreground">
+                            Usado para recalcular o custo médio. Sugerido: o custo médio atual.
+                        </p>
+                    </Field>
                     <Field>
                         <FieldLabel>Justificativa</FieldLabel>
                         <Textarea v-model="vm.ajuste.justificativa" rows="3" />
@@ -222,7 +229,10 @@ onMounted(vm.carregar)
                 </div>
                 <DialogFooter>
                     <Button variant="ghost" @click="vm.ajusteVisible = false">Cancelar</Button>
-                    <Button :disabled="vm.salvandoAjuste || !vm.ajuste.justificativa" @click="vm.registrarAjuste">
+                    <Button
+                        :disabled="vm.salvandoAjuste || !vm.ajuste.justificativa || (vm.ajusteAumenta && vm.ajuste.custo_unitario <= 0)"
+                        @click="vm.registrarAjuste"
+                    >
                         <LoaderCircle v-if="vm.salvandoAjuste" class="size-4 animate-spin" />
                         <Check v-else class="size-4" />
                         Ajustar

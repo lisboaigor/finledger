@@ -83,12 +83,14 @@ async fn ciclo_completo_de_movimentacao_de_estoque() -> TestResult {
             Err(DispatchError::Handler(AppError::Domain(_)))
         ));
 
-        // Ajuste
+        // Ajuste para cima (7 → 50): exige custo das 43 unidades acrescentadas
+        // e repondera o custo médio. (2000*7 + 3000*43) / 50 = 2860.
         dispatch(
             &*app.estoque,
             AjustarEstoque {
                 produto_id,
                 quantidade_nova: 50,
+                custo_unitario_centavos: Some(3000),
                 justificativa: "inventário físico".into(),
             },
         )
@@ -100,6 +102,40 @@ async fn ciclo_completo_de_movimentacao_de_estoque() -> TestResult {
             .expect("buscar")
             .expect("saldo deve existir");
         assert_eq!(saldo.quantidade, 50);
+        assert_eq!(saldo.custo_medio, 2860);
+
+        // Ajuste para cima SEM custo → erro de validação de domínio.
+        let r = dispatch(
+            &*app.estoque,
+            AjustarEstoque {
+                produto_id,
+                quantidade_nova: 60,
+                custo_unitario_centavos: None,
+                justificativa: "sem custo".into(),
+            },
+        )
+        .await;
+        assert!(matches!(r, Err(DispatchError::Handler(AppError::Domain(_)))));
+
+        // Ajuste para baixo dispensa custo e mantém o custo médio.
+        dispatch(
+            &*app.estoque,
+            AjustarEstoque {
+                produto_id,
+                quantidade_nova: 20,
+                custo_unitario_centavos: None,
+                justificativa: "perda".into(),
+            },
+        )
+        .await
+        .expect("ajuste para baixo");
+        aguardar_projecoes().await;
+        let saldo = query_dispatch(&*app.estoque, BuscarSaldo { produto_id })
+            .await
+            .expect("buscar")
+            .expect("saldo deve existir");
+        assert_eq!(saldo.quantidade, 20);
+        assert_eq!(saldo.custo_medio, 2860);
 
         // Estoque mínimo
         dispatch(
@@ -134,6 +170,7 @@ async fn ajuste_sem_justificativa_retorna_erro_de_validacao() -> TestResult {
             AjustarEstoque {
                 produto_id: Uuid::new_v4(),
                 quantidade_nova: 10,
+                custo_unitario_centavos: None,
                 justificativa: "   ".into(),
             },
         )

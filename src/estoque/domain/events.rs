@@ -29,6 +29,10 @@ pub enum EstoqueEvent {
         item_id: String,
         quantidade_anterior: u32,
         quantidade_nova: u32,
+        // Custo unitário das unidades acrescentadas num ajuste para cima —
+        // obrigatório quando o saldo aumenta, para não diluir o custo médio
+        // com unidades "de graça". `None` em ajuste para baixo ou igual.
+        custo_unitario_centavos: Option<i64>,
         justificativa: String,
         #[occurred_at]
         occurred_at: DateTime<Utc>,

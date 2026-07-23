@@ -235,12 +235,25 @@ export function useEstoqueViewModel() {
     // --- Ajuste de saldo ---
     const ajusteVisible = ref(false)
     const salvandoAjuste = ref(false)
-    const ajuste = reactive({ produto_id: '', quantidade_nova: 0, justificativa: '' })
+    const ajuste = reactive({
+        produto_id: '',
+        quantidade_atual: 0,
+        quantidade_nova: 0,
+        // Em unidades de moeda (convertido para centavos no envio).
+        custo_unitario: 0,
+        justificativa: '',
+    })
 
-    function abrirAjuste(linha: { produto_id: string; quantidade: number }) {
+    // Ajuste para cima exige custo das unidades acrescentadas (senão o custo
+    // médio ficaria diluído com unidades "de graça").
+    const ajusteAumenta = computed(() => ajuste.quantidade_nova > ajuste.quantidade_atual)
+
+    function abrirAjuste(linha: { produto_id: string; quantidade: number; custo_medio: number }) {
         Object.assign(ajuste, {
             produto_id: linha.produto_id,
+            quantidade_atual: linha.quantidade,
             quantidade_nova: linha.quantidade,
+            custo_unitario: linha.custo_medio / 100,
             justificativa: '',
         })
         ajusteVisible.value = true
@@ -251,6 +264,7 @@ export function useEstoqueViewModel() {
         try {
             await ajustarSaldo(apiFetch, ajuste.produto_id, {
                 quantidade_nova: ajuste.quantidade_nova,
+                custo_unitario_centavos: ajusteAumenta.value ? toCentavos(ajuste.custo_unitario) : null,
                 justificativa: ajuste.justificativa,
             })
             notifySuccess('Ajustado', 'Saldo ajustado.')
@@ -317,6 +331,7 @@ export function useEstoqueViewModel() {
         ajusteVisible,
         salvandoAjuste,
         ajuste,
+        ajusteAumenta,
         abrirAjuste,
         registrarAjuste,
         minimoVisible,

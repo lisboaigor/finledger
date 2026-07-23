@@ -108,18 +108,42 @@ impl ItemEstoque {
         Ok(())
     }
 
-    pub fn ajustar(&mut self, quantidade_nova: u32, justificativa: String) -> DomainResult<()> {
+    /// Ajusta o saldo para `quantidade_nova`. Um ajuste que **aumenta** o
+    /// saldo exige `custo_unitario` (as unidades acrescentadas entram no custo
+    /// médio); ajuste para baixo/igual ignora o custo.
+    pub fn ajustar(
+        &mut self,
+        quantidade_nova: u32,
+        custo_unitario: Option<Dinheiro>,
+        justificativa: String,
+    ) -> DomainResult<()> {
         if justificativa.trim().is_empty() {
             return Err(DomainError::Validation(
                 "Justificativa é obrigatória para ajuste de estoque".into(),
             ));
         }
         let anterior = self.saldo;
+        if quantidade_nova > anterior {
+            match custo_unitario {
+                None => {
+                    return Err(DomainError::Validation(
+                        "Custo unitário é obrigatório em ajuste que aumenta o saldo".into(),
+                    ));
+                }
+                Some(c) if c.centavos() < 0 => {
+                    return Err(DomainError::Validation(
+                        "Custo unitário não pode ser negativo".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
         self.saldo = quantidade_nova;
         self.events.raise(EstoqueEvent::AjusteEstoque {
             item_id: self.id.to_string(),
             quantidade_anterior: anterior,
             quantidade_nova,
+            custo_unitario_centavos: custo_unitario.map(|c| c.centavos()),
             justificativa,
             occurred_at: Utc::now(),
         });
@@ -193,8 +217,36 @@ mod tests {
     fn ajuste_sem_justificativa_retorna_erro() {
         let mut item = ItemEstoque::criar(Uuid::new_v4(), 0);
         assert!(matches!(
-            item.ajustar(20, "   ".into()),
+            item.ajustar(20, Some(Dinheiro::from_centavos(100)), "   ".into()),
             Err(DomainError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn ajuste_para_cima_sem_custo_retorna_erro() {
+        let mut item = ItemEstoque::criar(Uuid::new_v4(), 0);
+        assert!(matches!(
+            item.ajustar(20, None, "contagem".into()),
+            Err(DomainError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn ajuste_para_cima_com_custo_ok() {
+        let mut item = ItemEstoque::criar(Uuid::new_v4(), 0);
+        item.registrar_entrada(5, Dinheiro::from_centavos(100), "e".into(), None)
+            .expect("entrada");
+        item.ajustar(8, Some(Dinheiro::from_centavos(200)), "contagem".into())
+            .expect("ajuste");
+        assert_eq!(item.saldo, 8);
+    }
+
+    #[test]
+    fn ajuste_para_baixo_dispensa_custo() {
+        let mut item = ItemEstoque::criar(Uuid::new_v4(), 0);
+        item.registrar_entrada(10, Dinheiro::from_centavos(100), "e".into(), None)
+            .expect("entrada");
+        item.ajustar(4, None, "perda".into()).expect("ajuste");
+        assert_eq!(item.saldo, 4);
     }
 }

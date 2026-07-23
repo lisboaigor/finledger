@@ -77,6 +77,7 @@ impl EstoqueProjection {
             EstoqueEvent::AjusteEstoque {
                 item_id,
                 quantidade_nova,
+                custo_unitario_centavos,
                 occurred_at,
                 ..
             } => {
@@ -84,15 +85,27 @@ impl EstoqueProjection {
                 let Some(pid) = crate::projections::parse_uuid("item_id", item_id) else {
                     return Ok(());
                 };
+                // Ajuste para cima com custo informado repondera o custo médio
+                // (unidades novas entram pelo custo do ajuste); para baixo/igual
+                // ou sem custo, mantém o custo médio corrente.
                 sqlx::query(
                     "UPDATE proj_saldo_estoque
-                     SET quantidade = $2, atualizado_em = $3
+                     SET custo_medio = CASE
+                             WHEN $5::bigint IS NOT NULL AND $2 > quantidade AND $2 > 0 THEN
+                                 ROUND((custo_medio::numeric * quantidade
+                                        + $5::numeric * ($2 - quantidade))
+                                       / NULLIF($2, 0))::BIGINT
+                             ELSE custo_medio
+                         END,
+                         quantidade = $2,
+                         atualizado_em = $3
                      WHERE produto_id = $1 AND tenant_id = $4",
                 )
                 .bind(pid)
                 .bind(*quantidade_nova as i32)
                 .bind(*occurred_at)
                 .bind(tenant_id)
+                .bind(*custo_unitario_centavos)
                 .execute(&self.pool)
                 .await?;
             }
