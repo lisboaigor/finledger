@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, CirclePlus, HelpCircle, Info, LoaderCircle, Package, Phone, Tag, TrendingUp, Wallet } from '@lucide/vue'
+import { ArrowRight, CirclePlus, HelpCircle, Info, LoaderCircle, Package, Phone, Tag, TrendingUp, TriangleAlert, Wallet } from '@lucide/vue'
 import { VisAxis, VisGroupedBar, VisXYContainer } from '@unovis/vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -611,6 +611,11 @@ const abcTomStyle: Record<string, { backgroundColor: string }> = {
                                     <span class="text-xs text-muted-foreground"> / meta {{ row.sugestao.margemPct }}%</span>
                                 </template>
                                 <template #cell-deltaCentavos="{ row }">
+                                    <TriangleAlert
+                                        v-if="row.custoMedioAcimaCadastro"
+                                        class="inline size-3.5 mr-1 text-orange-500 align-[-2px]"
+                                        :title="`Custo médio do estoque (${formatCentavos(row.custoMedioAcimaCadastro.custoMedioCentavos)}) muito acima do cadastro (${formatCentavos(row.custoMedioAcimaCadastro.custoCadastroCentavos)}) — provável erro na entrada. A sugestão usa o médio; confira antes de aplicar.`"
+                                    />
                                     <strong>{{ formatCentavos(row.sugestao.precoCentavos) }}</strong>
                                     <span v-if="row.deltaCentavos !== 0" :class="['text-xs ml-1', row.deltaCentavos > 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-500']">
                                         ({{ row.deltaCentavos > 0 ? '+' : '' }}{{ formatCentavos(row.deltaCentavos) }})
@@ -636,8 +641,22 @@ const abcTomStyle: Record<string, { backgroundColor: string }> = {
                                 :sugestao="precos.detalhe.sugestao"
                                 :custo-centavos="precos.detalhe.custoBaseCentavos"
                             />
+                            <!-- Descompasso GRANDE: provável erro de entrada — alerta forte. -->
+                            <MessageBox
+                                v-if="precos.detalhe && precos.detalhe.custoMedioAcimaCadastro"
+                                severity="warn"
+                                class="mt-2"
+                            >
+                                O custo médio de estoque deste item
+                                (<strong>{{ formatCentavos(precos.detalhe.custoMedioAcimaCadastro.custoMedioCentavos) }}</strong>)
+                                está muito acima do custo de cadastro
+                                (<strong>{{ formatCentavos(precos.detalhe.custoMedioAcimaCadastro.custoCadastroCentavos) }}</strong>)
+                                — provável erro em alguma entrada de estoque. Como a sugestão usa o maior custo, ela fica
+                                inflada. <strong>Confira as entradas deste produto</strong> antes de aplicar o preço.
+                            </MessageBox>
+                            <!-- Diferença normal de compra: só uma nota informativa. -->
                             <p
-                                v-if="precos.detalhe && precos.detalhe.custoBaseCentavos > precos.detalhe.produto.preco_custo"
+                                v-else-if="precos.detalhe && precos.detalhe.custoBaseCentavos > precos.detalhe.produto.preco_custo"
                                 class="text-xs text-muted-foreground mt-2 flex items-start gap-1"
                             >
                                 <Info class="size-3.5 mt-0.5 shrink-0" />

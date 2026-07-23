@@ -15,7 +15,15 @@ export interface LinhaAnalisePreco {
     /** Ganho extra se vender o saldo atual ao preço sugerido (só deltas > 0). */
     ganhoPotencialCentavos: number
     encalhado: boolean
+    /** Custo médio do estoque MUITO acima do cadastro (provável erro de entrada):
+     * a sugestão usa o médio (o maior), então explode. Sinalizado para o gestor
+     * conferir a entrada em vez de confiar no preço inflado. null quando ok. */
+    custoMedioAcimaCadastro: { custoMedioCentavos: number; custoCadastroCentavos: number } | null
 }
+
+/** Acima disto (custo médio ÷ custo do cadastro) o descompasso vira alerta:
+ * 1,3 = custo médio 30% acima do cadastro. Abaixo, variação normal de compra. */
+const FATOR_ALERTA_CUSTO_MEDIO = 1.3
 
 /** Aba "Preços e Margens" do BI: compara o preço praticado de cada produto com
  * a sugestão do assistente (mesmo cálculo de useMargens — nada é refeito aqui)
@@ -67,6 +75,10 @@ export function useAnalisePrecosViewModel() {
                         saldo,
                         ganhoPotencialCentavos: delta > 0 ? delta * saldo : 0,
                         encalhado: (s.ajusteGiro?.pontos ?? 0) < 0,
+                        custoMedioAcimaCadastro:
+                            p.preco_custo > 0 && custoBase > p.preco_custo * FATOR_ALERTA_CUSTO_MEDIO
+                                ? { custoMedioCentavos: custoBase, custoCadastroCentavos: p.preco_custo }
+                                : null,
                     },
                 ]
             })
