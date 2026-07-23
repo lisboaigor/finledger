@@ -58,16 +58,20 @@ impl PostgresBiRepository {
         sqlx::query_as(
             r#"
             SELECT
-                (SELECT COALESCE(SUM(total_centavos), 0) FROM proj_vendas
-                  WHERE status = 'confirmada'
-                    AND bi.data_local(confirmada_em)
+                -- Faturamento DATADO e líquido: lê o fato do BI (bruto por mês da
+                -- venda + negativo datado da devolução, já sem o desconto global),
+                -- não proj_vendas — cujo total é recalculado na devolução e faria
+                -- um mês fechado mudar retroativamente (issue #17).
+                (SELECT COALESCE(SUM(receita_centavos), 0) FROM bi.fato_vendas_item
+                  WHERE status IN ('confirmada', 'devolucao')
+                    AND data_venda
                         >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)::bigint
                     AS receita_mes_centavos,
-                (SELECT COALESCE(SUM(total_centavos), 0) FROM proj_vendas
-                  WHERE status = 'confirmada'
-                    AND bi.data_local(confirmada_em)
+                (SELECT COALESCE(SUM(receita_centavos), 0) FROM bi.fato_vendas_item
+                  WHERE status IN ('confirmada', 'devolucao')
+                    AND data_venda
                         >= (date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') - INTERVAL '1 month')::date
-                    AND bi.data_local(confirmada_em)
+                    AND data_venda
                         <  date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)::bigint
                     AS receita_mes_anterior_centavos,
                 (SELECT COALESCE(SUM(valor_original - valor_recebido), 0) FROM proj_contas_receber
@@ -82,14 +86,15 @@ impl PostgresBiRepository {
                  - (SELECT COALESCE(SUM(valor_original - valor_pago), 0) FROM proj_contas_pagar
                      WHERE status IN ('pendente', 'parcial') AND vencimento <= NOW() + INTERVAL '30 days'))::bigint
                     AS caixa_30d_centavos,
+                -- Margem também datada e líquida de devoluções (net do mês).
                 (SELECT SUM(margem_centavos)::float8 / NULLIF(SUM(receita_centavos), 0)::float8 * 100
                    FROM bi.fato_vendas_item
-                  WHERE status = 'confirmada'
+                  WHERE status IN ('confirmada', 'devolucao')
                     AND data_venda >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)
                     AS margem_percent,
                 (SELECT SUM(margem_liquida_centavos)::float8 / NULLIF(SUM(receita_centavos), 0)::float8 * 100
                    FROM bi.fato_vendas_item
-                  WHERE status = 'confirmada'
+                  WHERE status IN ('confirmada', 'devolucao')
                     AND data_venda >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')::date)
                     AS margem_liquida_percent,
                 (SELECT (COUNT(*) FILTER (WHERE status = 'convertido'))::float8
@@ -108,11 +113,13 @@ impl PostgresBiRepository {
     pub async fn receita_diaria(&self) -> Result<Vec<ReceitaDiaResult>, AppError> {
         sqlx::query_as(
             r#"
+            -- Gráfico diário: fato datado e líquido (venda no seu dia + devolução
+            -- no dia dela), não proj_vendas recalculado na devolução (issue #17).
             SELECT to_char(d, 'YYYY-MM-DD') AS dia,
-                   COALESCE(SUM(v.total_centavos), 0)::bigint AS total_centavos
+                   COALESCE(SUM(f.receita_centavos), 0)::bigint AS total_centavos
               FROM generate_series(bi.data_local(now()) - 29, bi.data_local(now()), '1 day') AS d
-              LEFT JOIN proj_vendas v
-                     ON v.status = 'confirmada' AND bi.data_local(v.confirmada_em) = d::date
+              LEFT JOIN bi.fato_vendas_item f
+                     ON f.status IN ('confirmada', 'devolucao') AND f.data_venda = d::date
              GROUP BY d
              ORDER BY d
             "#,

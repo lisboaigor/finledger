@@ -372,6 +372,42 @@ END $$;
 -- ocorreu (status 'devolucao'). Assim relatórios por período não mudam
 -- retroativamente. (Devolução TOTAL cancela a venda → sai das análises pelo
 -- status, sem fato negativo.)
+-- Rateio half-up de um valor global (ex.: desconto da venda) pela participação
+-- de uma parte no total. Igual à aritmética de Aliquota::half_up no domínio
+-- (issue #17): centavos inteiros, ROUND simétrico, 0 quando não há base.
+CREATE OR REPLACE FUNCTION bi.ratear(total_valor NUMERIC, parte NUMERIC, total NUMERIC)
+RETURNS BIGINT LANGUAGE sql IMMUTABLE AS $$
+    SELECT COALESCE(ROUND(total_valor * parte / NULLIF(total, 0)), 0)::bigint
+$$;
+
+-- Bruto ORIGINAL por venda (itens presentes com a quantidade reconstituída +
+-- itens que a devolução removeu de proj_vendas_itens) e o desconto global da
+-- venda. Base única do rateio do desconto — consumida tanto pelo fato bruto
+-- quanto pelo fato negativo de devolução, para não redefinir a conta duas vezes.
+CREATE OR REPLACE VIEW bi.venda_bruto AS
+WITH dev AS (
+    SELECT tenant_id, venda_id, item_id, SUM(quantidade) AS q, SUM(receita_centavos) AS r
+      FROM proj_devolucoes GROUP BY 1, 2, 3
+)
+SELECT g.tenant_id, g.venda_id, SUM(g.orig_gross) AS gross, MAX(g.desconto) AS desconto
+  FROM (
+      SELECT v.tenant_id, v.venda_id,
+             (vi.quantidade + COALESCE(dd.q, 0)) * vi.preco_unitario_centavos AS orig_gross,
+             v.desconto_centavos AS desconto
+        FROM proj_vendas v
+        JOIN proj_vendas_itens vi ON vi.tenant_id = v.tenant_id AND vi.venda_id = v.venda_id
+        LEFT JOIN dev dd ON dd.tenant_id = v.tenant_id AND dd.item_id = vi.item_id
+       WHERE v.status IN ('confirmada', 'cancelada')
+      UNION ALL
+      SELECT v.tenant_id, v.venda_id, d.r, v.desconto_centavos
+        FROM dev d
+        JOIN proj_vendas v ON v.tenant_id = d.tenant_id AND v.venda_id = d.venda_id
+       WHERE v.status IN ('confirmada', 'cancelada')
+         AND NOT EXISTS (SELECT 1 FROM proj_vendas_itens vi
+                          WHERE vi.tenant_id = d.tenant_id AND vi.item_id = d.item_id)
+  ) g
+ GROUP BY 1, 2;
+
 CREATE OR REPLACE FUNCTION bi.etl_vendas() RETURNS BIGINT
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = bi, public AS $$
 DECLARE corte TIMESTAMPTZ := bi.watermark_corte('proj_vendas'); n BIGINT;
@@ -410,23 +446,32 @@ BEGIN
     )
     -- Custo congelado: prefere o custo médio real do saldo; cai no preço de
     -- custo do cadastro (limitação restante: é o custo médio ATUAL, não o da data da venda).
+    -- Receita LÍQUIDA do desconto global rateado pela participação do item no
+    -- bruto da venda (issue #17): o topline do dashboard passa a ler este fato
+    -- datado, então ele precisa casar com proj_vendas.total (± centavos de
+    -- arredondamento). A margem também deixa de ignorar o desconto.
     SELECT it.tenant_id, it.item_id, it.venda_id, dp.sk, it.produto_id, it.cliente_id,
            it.vendedor_id, it.forma_pagamento, it.status,
            bi.data_local(it.quando),
            (it.q_efetiva + COALESCE(dev.q, 0)),
-           (it.q_efetiva + COALESCE(dev.q, 0)) * it.preco,
-           COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
-           (it.q_efetiva + COALESCE(dev.q, 0)) * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
-           (it.q_efetiva + COALESCE(dev.q, 0)) * (it.preco - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
+           bruto.valor - bi.ratear(vb.desconto, bruto.valor, vb.gross),
+           custo.unit,
+           (it.q_efetiva + COALESCE(dev.q, 0)) * custo.unit,
+           (bruto.valor - bi.ratear(vb.desconto, bruto.valor, vb.gross))
+               - (it.q_efetiva + COALESCE(dev.q, 0)) * custo.unit,
            -- Sem impostos ainda (a NF é projetada logo após); a líquida nasce
-           -- igual à bruta e é ajustada por bi.refresh_impostos_vendas().
-           (it.q_efetiva + COALESCE(dev.q, 0)) * (it.preco - COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
+           -- igual à bruta (já sem desconto) e é ajustada por bi.refresh_impostos_vendas().
+           (bruto.valor - bi.ratear(vb.desconto, bruto.valor, vb.gross))
+               - (it.q_efetiva + COALESCE(dev.q, 0)) * custo.unit
       FROM itens it
+      JOIN venda_bruto vb ON vb.tenant_id = it.tenant_id AND vb.venda_id = it.venda_id
       LEFT JOIN dev ON dev.tenant_id = it.tenant_id AND dev.item_id = it.item_id
       LEFT JOIN bi.dim_produto dp
              ON dp.tenant_id = it.tenant_id AND dp.produto_id = it.produto_id AND dp.atual
       LEFT JOIN proj_saldo_estoque se
              ON se.tenant_id = it.tenant_id AND se.produto_id = it.produto_id
+      CROSS JOIN LATERAL (SELECT (it.q_efetiva + COALESCE(dev.q, 0)) * it.preco AS valor) bruto
+      CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0) AS unit) custo
     ON CONFLICT (tenant_id, item_id) DO UPDATE
        SET status = EXCLUDED.status,
            forma_pagamento = EXCLUDED.forma_pagamento,
@@ -450,23 +495,29 @@ BEGIN
         (tenant_id, item_id, venda_id, produto_sk, produto_id, cliente_id, vendedor_id,
          forma_pagamento, status, data_venda, quantidade, receita_centavos,
          custo_unitario_centavos, custo_centavos, margem_centavos, margem_liquida_centavos)
+    -- Receita removida = valor LÍQUIDO que o item devolvido havia contribuído:
+    -- bruto devolvido menos o desconto global rateado sobre esse bruto (mesma
+    -- base vb do fato positivo), para o net dos dois casar com proj_vendas.total.
     SELECT d.tenant_id,
            md5(d.item_id::text || d.devolvida_em::text)::uuid,
            d.venda_id, dp.sk, d.produto_id, v.cliente_id, v.vendedor_id, v.forma_pagamento,
            'devolucao',
            bi.data_local(d.devolvida_em),
            -d.quantidade,
-           -d.receita_centavos,
-           COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0),
-           -(d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
-           -(d.receita_centavos - d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0)),
-           -(d.receita_centavos - d.quantidade * COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0))
+           -liq.valor,
+           custo.unit,
+           -(d.quantidade * custo.unit),
+           -(liq.valor - d.quantidade * custo.unit),
+           -(liq.valor - d.quantidade * custo.unit)
       FROM proj_devolucoes d
       JOIN proj_vendas v ON v.tenant_id = d.tenant_id AND v.venda_id = d.venda_id
+      JOIN venda_bruto vb ON vb.tenant_id = d.tenant_id AND vb.venda_id = d.venda_id
       LEFT JOIN bi.dim_produto dp
              ON dp.tenant_id = d.tenant_id AND dp.produto_id = d.produto_id AND dp.atual
       LEFT JOIN proj_saldo_estoque se
              ON se.tenant_id = d.tenant_id AND se.produto_id = d.produto_id
+      CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(se.custo_medio, 0), dp.preco_custo, 0) AS unit) custo
+      CROSS JOIN LATERAL (SELECT d.receita_centavos - bi.ratear(vb.desconto, d.receita_centavos, vb.gross) AS valor) liq
     ON CONFLICT (tenant_id, item_id) DO UPDATE
        SET quantidade = EXCLUDED.quantidade,
            receita_centavos = EXCLUDED.receita_centavos,
