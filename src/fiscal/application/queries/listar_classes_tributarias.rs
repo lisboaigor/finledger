@@ -30,12 +30,6 @@ impl<S: SefazClient, A: AliquotaProvider> QueryHandler<ListarClassesTributarias>
         &self,
         _query: ListarClassesTributarias,
     ) -> Result<Vec<ClasseTributariaResult>, AppError> {
-        sqlx::query_as(
-            "SELECT c_class_trib, descricao, cst_ibs_cbs, reducao_bps
-             FROM ref_classes_tributarias ORDER BY c_class_trib",
-        )
-        .fetch_all(self.repo.pool())
-        .await
-        .map_err(AppError::infra)
+        self.repo.listar_classes_tributarias().await
     }
 }

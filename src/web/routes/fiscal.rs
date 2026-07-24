@@ -11,7 +11,7 @@ use crate::auth::{AuthUser, Role};
 use crate::error::AppError;
 use crate::fiscal::application::commands::{CancelarNotaFiscal, RetransmitirNotaFiscal};
 use crate::fiscal::application::queries::{
-    BuscarNotaFiscal, ListarClassesTributarias, ListarNotasFiscais,
+    BuscarNotaFiscal, ListarAliquotaEfetivaProdutos, ListarClassesTributarias, ListarNotasFiscais,
 };
 use crate::web::routes::PaginacaoParams;
 use crate::web::{error::ApiError, state::FiscalState};
@@ -51,7 +51,7 @@ pub async fn aliquotas_efetivas(
     State(s): State<FiscalState>,
     _user: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let aliquotas = s.fiscal.listar_aliquota_efetiva_produtos().await?;
+    let aliquotas = query_dispatch(&*s.fiscal, ListarAliquotaEfetivaProdutos).await?;
     Ok(Json(json!({ "aliquotas": aliquotas })))
 }
 

@@ -6,9 +6,19 @@ use crate::shared::tenant_repository::TenantScopedRepository;
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::fiscal::application::queries::NotaFiscalResult;
+use crate::fiscal::application::queries::{ClasseTributariaResult, NotaFiscalResult};
 use crate::fiscal::domain::nota_fiscal::{NotaFiscal, NotaFiscalId};
 use crate::shared::normalizar_paginacao;
+
+/// Produto ativo com os campos que definem sua tributação (NCM + classe), lido
+/// da projeção para a alíquota efetiva. O cálculo em si (motor + provider) é
+/// orquestração de aplicação — aqui fica só o acesso ao read model.
+#[derive(sqlx::FromRow)]
+pub struct ProdutoTributavel {
+    pub produto_id: Uuid,
+    pub ncm: String,
+    pub c_class_trib: Option<String>,
+}
 
 pub struct PostgresNotaFiscalRepository {
     inner: TenantScopedRepository<NotaFiscal>,
@@ -76,6 +86,31 @@ impl PostgresNotaFiscalRepository {
         .bind(nf_id)
         .bind(tenant_id)
         .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::infra)
+    }
+
+    /// Classes tributárias de referência (cClassTrib, NT 2025.002) — dado
+    /// global, sem tenant. Alimenta o select de classificação do produto.
+    pub async fn listar_classes_tributarias(&self) -> Result<Vec<ClasseTributariaResult>, AppError> {
+        sqlx::query_as(
+            "SELECT c_class_trib, descricao, cst_ibs_cbs, reducao_bps
+             FROM ref_classes_tributarias ORDER BY c_class_trib",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::infra)
+    }
+
+    /// Produtos ativos do tenant com NCM e classe tributária — insumo do cálculo
+    /// da alíquota efetiva (o motor tributário roda na camada de aplicação).
+    pub async fn listar_produtos_tributaveis(&self) -> Result<Vec<ProdutoTributavel>, AppError> {
+        sqlx::query_as(
+            "SELECT produto_id, ncm, c_class_trib FROM proj_produtos
+             WHERE ativo AND tenant_id = $1",
+        )
+        .bind(current_tenant_id()?)
+        .fetch_all(&self.pool)
         .await
         .map_err(AppError::infra)
     }
