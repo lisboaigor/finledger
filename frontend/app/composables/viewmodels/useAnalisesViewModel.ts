@@ -1,3 +1,4 @@
+import type { BadgeSeverity } from '@/components/StatusBadge.vue'
 import type { ChartConfig } from '@/components/ui/chart'
 import type { ComercialBi, EstoqueBi, FinanceiroBi } from '~/models/bi'
 import { obterComercialBi, obterEstoqueBi, obterFinanceiroBi } from '~/models/bi'
@@ -117,7 +118,7 @@ export function useAnalisesViewModel() {
         return decididos > 0 ? (conta('convertido') / decididos) * 100 : null
     })
 
-    const segmentoSeverity: Record<string, string> = {
+    const segmentoSeverity: Record<string, BadgeSeverity> = {
         'Campeão': 'success',
         'Fiel': 'info',
         'Novo/Recente': 'info',

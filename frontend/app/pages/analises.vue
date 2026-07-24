@@ -410,7 +410,7 @@ const abcTomStyle: Record<string, { backgroundColor: string }> = {
                             >
                                 <template #cell-produto="{ row }">{{ row.sku }} — {{ row.descricao }}</template>
                                 <template #cell-importancia="{ row }">
-                                    <StatusBadge :value="importanciaLabel[row.classe_abc]" :severity="row.classe_abc === 'A' ? 'danger' : row.classe_abc === 'B' ? 'warn' : 'secondary'" />
+                                    <StatusBadge :value="importanciaLabel[row.classe_abc] ?? row.classe_abc" :severity="row.classe_abc === 'A' ? 'danger' : row.classe_abc === 'B' ? 'warn' : 'secondary'" />
                                 </template>
                                 <template #cell-cobertura="{ row }">{{ row.cobertura_dias === null ? '—' : `${row.cobertura_dias} dia(s)` }}</template>
                                 <template #cell-acoes="{ row }">
