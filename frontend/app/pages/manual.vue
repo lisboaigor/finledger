@@ -10,6 +10,7 @@ import {
     FileText,
     GitBranch,
     Home,
+    Landmark,
     Lightbulb,
     Monitor,
     Percent,
@@ -281,6 +282,15 @@ const fluxos = [
         ],
     },
     {
+        icon: Landmark,
+        titulo: 'Imposto na venda',
+        passos: [
+            'Perfil fiscal define regime e estado (Configurações)',
+            'Sistema calcula o imposto efetivo do produto na fase atual',
+            'Compõe o preço sugerido e sai detalhado na nota fiscal',
+        ],
+    },
+    {
         icon: Zap,
         titulo: 'Motor de alertas',
         passos: [
@@ -316,6 +326,7 @@ const fluxos = [
                 <component :is="m.icon" class="size-3.5" /> {{ m.titulo }}
             </a>
             <a href="#margens" class="manual-chip manual-chip-destaque"><Percent class="size-3.5" /> Entendendo as margens</a>
+            <a href="#impostos" class="manual-chip manual-chip-destaque"><Landmark class="size-3.5" /> Impostos</a>
             <a href="#fluxos" class="manual-chip manual-chip-destaque"><GitBranch class="size-3.5" /> Como tudo se conecta</a>
         </div>
 
@@ -434,6 +445,94 @@ const fluxos = [
                 balcão competitiva, defina uma sobra final honesta (5–15%) nas Configurações e persiga a
                 <strong>meta de faturamento</strong> no Dashboard — o crescimento do volume é o que engorda
                 a sobra, e o sistema avisa quando o rateio dos custos fixos precisar ser atualizado.
+            </p>
+        </section>
+
+        <!-- Impostos: como o sistema calcula, precifica e emite -->
+        <section id="impostos" class="manual-secao">
+            <div class="mb-1 flex items-center gap-2">
+                <Landmark class="size-5 text-primary" />
+                <h2 class="m-0 text-xl font-semibold">Impostos — como o sistema calcula e aplica</h2>
+            </div>
+            <p class="mb-4 text-muted-foreground">
+                O imposto entra sozinho na conta do preço e na nota fiscal — você não precisa lançar
+                percentual em cada venda. O que o sistema faz depende do <strong>perfil fiscal</strong>
+                que você informa em Configurações. Aqui está, sem contabilês, o que acontece por baixo.
+            </p>
+
+            <div class="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Card>
+                    <CardContent>
+                        <p class="mb-1 font-semibold">Como o sistema sabe quanto é o seu imposto</p>
+                        <p class="mb-0 text-sm text-muted-foreground">
+                            Ele vem do seu <strong>regime tributário</strong> (Simples, Presumido, Real) e
+                            do estado, cadastrados no perfil fiscal. <strong>Sem perfil configurado, o
+                            sistema não chuta</strong>: assume imposto <strong>0%</strong> e deixa você
+                            digitar um valor manual. É de propósito — chutar ~21% onde não há imposto
+                            proporcional estragaria a sugestão de preço.
+                        </p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent>
+                        <p class="mb-1 font-semibold">MEI: DAS fixo, não percentual</p>
+                        <p class="mb-0 text-sm text-muted-foreground">
+                            Quem é <strong>MEI</strong> paga um DAS fixo por mês, não uma fatia de cada
+                            venda — então o sistema usa <strong>0% por venda</strong> e a sugestão de preço
+                            não embute imposto proporcional. Ao configurar o regime (deixando de ser MEI ou
+                            informando a alíquota real), o cálculo passa a usar esse número automaticamente.
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <p class="mb-2 text-sm font-medium">O que de fato entra na conta — o "imposto efetivo":</p>
+            <ul class="manual-pontos mb-4">
+                <li>
+                    O sistema <strong>simula uma venda hoje</strong>, no seu regime e na fase atual da
+                    reforma tributária, e separa só o imposto que é <strong>custo real seu</strong> —
+                    aquilo que efetivamente sai do seu bolso.
+                </li>
+                <li>
+                    O que o Simples já recolhe junto no DAS <strong>não é somado de novo</strong>: aparece
+                    na nota como informação, mas não pesa duas vezes no preço.
+                </li>
+                <li>
+                    Esse imposto efetivo é <strong>um dos componentes da sugestão de preço</strong>, ao
+                    lado de comissão, taxa de cartão, frete e a fatia dos custos fixos — e da margem que
+                    você quer. Produto novo (sem histórico fiscal) usa o imposto manual como piso.
+                </li>
+            </ul>
+
+            <p class="manual-conexao mb-4">
+                <Percent class="mr-1 inline size-3.5" /><strong>Liga com as duas margens:</strong> a
+                <strong>margem de balcão</strong> (bruta) ignora o imposto; a <strong>sobra final</strong>
+                (líquida) já o desconta. Por isso a aba Preços e Margens das Análises mostra sempre a
+                margem líquida — a que sobra depois do imposto. Veja "Entendendo as margens" acima.
+            </p>
+
+            <p class="mb-2 text-sm font-medium">A reforma tributária entra sozinha, conforme o calendário:</p>
+            <div class="mb-3 overflow-x-auto">
+                <table class="manual-tabela">
+                    <thead>
+                        <tr><th>Período</th><th>O que vale (o sistema acompanha automaticamente)</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>2025</td><td>Regime atual (ICMS/ISS, PIS/COFINS)</td></tr>
+                        <tr><td>2026</td><td>Teste dos novos tributos (CBS/IBS) — só informativo na nota</td></tr>
+                        <tr><td>2027–2028</td><td>Acabam PIS/COFINS; entra a CBS pra valer</td></tr>
+                        <tr><td>2029–2032</td><td>ICMS/ISS vão diminuindo ano a ano</td></tr>
+                        <tr><td>2033</td><td>Só os novos tributos (CBS/IBS e o Seletivo)</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="manual-conexao">
+                <GitBranch class="mr-1 inline size-3.5" /><strong>Conexões:</strong> o imposto vem do
+                <strong>perfil fiscal</strong> (Configurações), entra na sugestão de preço do
+                <strong>Catálogo</strong> e na aba Preços e Margens das <strong>Análises</strong>, e é
+                espelhado na <strong>nota fiscal</strong> — que sai com os tributos detalhados e o código
+                certo escolhido pelo regime (CST 00 no normal, CSOSN 102 no Simples), sem você digitar nada.
             </p>
         </section>
 
